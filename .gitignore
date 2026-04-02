@@ -1,0 +1,8 @@
+# Godot
+.godot/
+/android/
+*.import
+
+# OS
+.DS_Store
+Thumbs.db

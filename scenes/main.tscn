@@ -1,0 +1,28 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
+[ext_resource type="Script" path="res://scripts/floor_draw.gd" id="2_floor"]
+[ext_resource type="PackedScene" path="res://scenes/dummy.tscn" id="3_dummy"]
+[ext_resource type="Script" path="res://scripts/finisher.gd" id="4_finisher"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
+size = Vector2(5000, 20)
+
+[node name="Main" type="Node2D"]
+
+[node name="Player" parent="." instance=ExtResource("1_player")]
+position = Vector2(640, 380)
+
+[node name="Dummy" parent="." instance=ExtResource("3_dummy")]
+position = Vector2(900, 380)
+
+[node name="Finisher" type="Node2D" parent="."]
+script = ExtResource("4_finisher")
+
+[node name="Floor" type="StaticBody2D" parent="."]
+position = Vector2(0, 493)
+script = ExtResource("2_floor")
+
+[node name="Collision" type="CollisionShape2D" parent="Floor"]
+position = Vector2(0, 10)
+shape = SubResource("RectangleShape2D_1")
