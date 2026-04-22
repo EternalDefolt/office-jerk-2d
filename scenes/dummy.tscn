@@ -1,12 +1,75 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/dummy.gd" id="1_script"]
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
-size = Vector2(72, 226)
+[sub_resource type="RectangleShape2D" id="MainCollision"]
+size = Vector2(40, 20)
+
+[sub_resource type="RectangleShape2D" id="HeadShape"]
+size = Vector2(68, 64)
+
+[sub_resource type="RectangleShape2D" id="BodyShape"]
+size = Vector2(46, 82)
+
+[sub_resource type="CircleShape2D" id="LHandShape"]
+radius = 22.0
+
+[sub_resource type="CircleShape2D" id="RHandShape"]
+radius = 22.0
+
+[sub_resource type="RectangleShape2D" id="LFootShape"]
+size = Vector2(44, 16)
+
+[sub_resource type="RectangleShape2D" id="RFootShape"]
+size = Vector2(44, 16)
 
 [node name="Dummy" type="StaticBody2D"]
+collision_layer = 2
+collision_mask = 0
 script = ExtResource("1_script")
 
 [node name="Collision" type="CollisionShape2D" parent="."]
-shape = SubResource("RectangleShape2D_1")
+position = Vector2(0, 125)
+shape = SubResource("MainCollision")
+
+[node name="HeadHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="HeadHurt"]
+shape = SubResource("HeadShape")
+
+[node name="BodyHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="BodyHurt"]
+shape = SubResource("BodyShape")
+
+[node name="LHandHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="LHandHurt"]
+shape = SubResource("LHandShape")
+
+[node name="RHandHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="RHandHurt"]
+shape = SubResource("RHandShape")
+
+[node name="LFootHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="LFootHurt"]
+shape = SubResource("LFootShape")
+
+[node name="RFootHurt" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="RFootHurt"]
+shape = SubResource("RFootShape")

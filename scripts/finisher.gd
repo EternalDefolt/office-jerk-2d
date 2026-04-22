@@ -2,7 +2,7 @@ extends Node2D
 ## Finisher — keyframed grab + physics throw. Heavy, impactful.
 ## Principles: 3:1 windup/snap ratio, hitstop, dummy locked to player during grab
 
-enum Phase { INACTIVE, LUNGE, GRAB, WINDUP, RELEASE }
+enum Phase { INACTIVE, ANTICIPATION, LUNGE, GRAB, WINDUP, RELEASE }
 
 const GND := 113.0
 const SZ_HEAD := Vector2(68, 64)
@@ -30,6 +30,7 @@ var _neck_local := Vector2.ZERO
 # Hitstop
 var _hitstop_left := 0.0
 var _hitstop_vib := 0.0
+var _release_shake := 0.0  # decays over release phase — camera punch
 
 # Particles
 var _dust: Array = []
@@ -70,6 +71,7 @@ func _physics_process(delta: float) -> void:
 
 	_t += delta
 	match _phase:
+		Phase.ANTICIPATION: _do_anticipation(delta)
 		Phase.LUNGE: _do_lunge(delta)
 		Phase.GRAB: _do_grab(delta)
 		Phase.WINDUP: _do_windup(delta)
@@ -85,12 +87,52 @@ func _start() -> void:
 	_dir = signf(_dummy.global_position.x - _player.global_position.x)
 	_grab_hand = 1 if _dir > 0 else 0
 	_d_start = _dummy.global_position
+	_p_start_x = _player.global_position.x  # BUG FIX: remember where player started
+	_p_target_x = _player.global_position.x  # BUG FIX: set recovery target to current pos
 	_player._vdir = _dir
 	_player._dir = _dir
 	if _camera:
 		_cam_zoom = _camera.zoom
-	_phase = Phase.LUNGE
+	_phase = Phase.ANTICIPATION
 	_t = 0.0
+
+
+# ═══════════════════════════
+#  ANTICIPATION (0.18s) — player coils back, audience holds breath
+# ═══════════════════════════
+func _do_anticipation(delta: float) -> void:
+	var dur := 0.18
+	var t := clampf(_t / dur, 0.0, 1.0)
+	var et := t * t * (3.0 - 2.0 * t)  # smoothstep
+
+	# Player coils BACK and squats slightly — winding up the whole body
+	_player._t_rot = _dir * lerpf(0.0, -0.10, et)
+	_player._h_rot = _dir * lerpf(0.0, -0.05, et)
+	_player._squash = lerpf(_player._squash, 0.12, delta * 10.0)
+	# Tiny step back
+	_player.global_position.x -= _dir * delta * 25.0 * (1.0 - et)
+	_recomp()
+	# Both hands cock: grab hand reaches back, free hand raises
+	var sh_y := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y + SZ_BODY.y * 0.25
+	var cock_x := -_dir * 15.0
+	if _grab_hand == 1:
+		_player._rh_pos = _player._rh_pos.lerp(Vector2(cock_x, sh_y + 30.0), delta * 10.0)
+	else:
+		_player._lh_pos = _player._lh_pos.lerp(Vector2(cock_x, sh_y + 30.0), delta * 10.0)
+
+	# Dummy faint tremor — senses what's coming
+	_dummy._fin_override = _stand_pose(sin(_t * 30.0) * 1.2)
+
+	# Camera slow zoom-in for tension
+	if _camera:
+		_camera.zoom = _cam_zoom.lerp(_cam_zoom * 1.08, et)
+
+	if _t >= dur:
+		_phase = Phase.LUNGE
+		_t = 0.0
+
+	_player.queue_redraw()
+	_dummy.queue_redraw()
 
 
 # ═══════════════════════════
@@ -110,7 +152,7 @@ func _do_lunge(delta: float) -> void:
 	_recomp()
 
 	# Grab hand reaches toward dummy neck
-	var neck_world := _dummy.global_position + Vector2(0, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB * 0.5)
+	var neck_world := _dummy.global_position + Vector2(0, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
 	var hand_local = neck_world - _player.global_position
 	if _grab_hand == 1:
 		_player._rh_pos = _player._rh_pos.lerp(hand_local, delta * 12.0)
@@ -144,7 +186,8 @@ func _do_grab(delta: float) -> void:
 
 	# Hand locked to neck — SHAKES from weight of holding dummy up
 	var strain := sin(_t * 7.0) * 3.0 * alive + randf_range(-1.5, 1.5) * alive
-	var neck = _d_offset + Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB * 0.5 + sin(_t * 4.0) * 2.0)
+	# Neck position higher — don't let head go under body
+	var neck = _d_offset + Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3 + sin(_t * 4.0) * 2.0)
 	if _grab_hand == 1:
 		_player._rh_pos = neck
 		_player._rh_rot = atan2(0.5 + sin(_t * 5.0) * 0.1, _dir)
@@ -159,31 +202,33 @@ func _do_grab(delta: float) -> void:
 	_recomp()
 	_set_free_hand(delta)
 
-	# Dummy STRUGGLES with WEIGHT (not vibration — actual movement)
+	# AI-driven dummy behavior — generates its own reactions
+	_dummy._ai.set_intent(_dummy._ai.Intent.CHOKING)
+	_dummy._ai.facing_dir = _dir
+	# Tell AI where the grab point is (player's hand on neck)
+	_dummy._ai.grab_point = Vector2(0, -(SZ_BODY.y * 0.45))
+	_dummy._ai.update(delta)
+
+	# Convert AI limb positions to _fin_override
 	var bt := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y
 	var hy := bt - GAP_HB - SZ_HEAD.y / 2.0
 	var by := bt + SZ_BODY.y / 2.0
-	var kick_l := sin(_t * 3.5) * 18.0 * alive  # slow heavy kicks
-	var kick_r := sin(_t * 4.2 + 1.0) * 18.0 * alive
-	var grab_at_neck := sin(_t * 5.0) * 3.0 * alive
-	var head_jerk := sin(_t * 6.0) * 4.0 * alive + randf_range(-1, 1) * alive
+	var offsets = _dummy._ai.get_offsets_from_rest()
+
+	# Compute hand rotations from AI limb velocity (hands point where they're going)
+	var lh_vel: Vector2 = _dummy._ai.limbs[2].vel
+	var rh_vel: Vector2 = _dummy._ai.limbs[3].vel
+	var lh_rot := atan2(lh_vel.y, lh_vel.x) if lh_vel.length() > 5.0 else PI / 2.0
+	var rh_rot := atan2(rh_vel.y, rh_vel.x) if rh_vel.length() > 5.0 else PI / 2.0
 
 	_dummy._fin_override = {
-		"head_ctr": Vector2(head_jerk, hy),
-		"body_ctr": Vector2(sin(_t * 3.0) * 2.0 * alive, by),
-		"rot": [head_jerk * 0.02, sin(_t * 2.5) * 0.03 * alive],
+		"head_ctr": Vector2(offsets[0].x, hy + offsets[0].y),
+		"body_ctr": Vector2(offsets[1].x, by + offsets[1].y),
+		"rot": [offsets[0].x * 0.008, offsets[1].x * 0.01],
 		"squash": [Vector2.ONE, Vector2.ONE],
-		"tremor": alive * 3.0,
-		"off": [
-			Vector2(head_jerk, 0),
-			Vector2(sin(_t * 3.0) * 2.0 * alive, 0),
-			# Hands at own neck, prying
-			Vector2(grab_at_neck, -SZ_BODY.y * 0.3 + sin(_t * 7.0) * 4.0 * alive),
-			Vector2(-grab_at_neck, -SZ_BODY.y * 0.3 + sin(_t * 8.0) * 4.0 * alive),
-			# Feet: heavy pendulum kicks (not vibration)
-			Vector2(kick_l, sin(_t * 2.0) * 8.0 * alive),
-			Vector2(kick_r, sin(_t * 2.5) * 8.0 * alive),
-		],
+		"tremor": 0.3,
+		"off": offsets,
+		"hand_rot": [lh_rot, rh_rot],
 	}
 
 	if _camera:
@@ -198,43 +243,88 @@ func _do_grab(delta: float) -> void:
 
 
 # ═══════════════════════════
-#  WINDUP (0.2s) — SLOW pullback. 3:1 ratio.
+#  WINDUP (0.45s) — HEAVY pullback. Longer = more weight.
 # ═══════════════════════════
 func _do_windup(delta: float) -> void:
-	var dur := 0.2  # wind-up is 3x longer than snap (snap = ~0.06s via hitstop)
+	var dur := 0.45  # longer windup = heavier feel (~4:1 ratio with hitstop snap)
 	var t := clampf(_t / dur, 0.0, 1.0)
-	var et := 1.0 - (1.0 - t) * (1.0 - t)  # ease-out (decelerates into coil)
 
-	# Player coils BACK (opposite throw direction)
-	_player._t_rot = _dir * lerpf(0.1, -0.15, et)
-	_player._h_rot = _dir * lerpf(0.05, -0.08, et)
+	# Two sub-phases: coil (0-80%) + brief hold (80-100%)
+	if t < 0.8:
+		var ct := t / 0.8
+		var et := 1.0 - (1.0 - ct) * (1.0 - ct)
+		# Player coils BACK hard — body weight shifts opposite to throw
+		_player._t_rot = _dir * lerpf(0.1, -0.18, et) + randf_range(-0.005, 0.005)
+		_player._h_rot = _dir * lerpf(0.05, -0.1, et)
+		# Slight step back during coil
+		_player.global_position.x -= _dir * delta * 30.0 * (1.0 - ct)
+	else:
+		# HOLD at max coil — tiny tremor, stillness before snap
+		_player._t_rot = _dir * (-0.18 + sin(_t * 40.0) * 0.01)
+		_player._h_rot = _dir * -0.1
+
 	_recomp()
 
-	# Dummy pulled back with player
+	# Dummy still locked to player
 	_dummy.global_position = _player.global_position + _d_offset
 
-	# Hand still on neck
-	var neck = _d_offset + Vector2(0, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB * 0.5)
+	# Hand on neck (same height as grab phase)
+	var strain := sin(_t * 12.0) * 1.5
+	var neck = _d_offset + Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
 	if _grab_hand == 1:
 		_player._rh_pos = neck
 	else:
 		_player._lh_pos = neck
 	_set_free_hand(delta)
 
-	# Dummy: frozen in fear (stopped struggling, going limp)
+	# AI continues choking behavior (weakening as energy drains)
+	_dummy._ai.set_intent(_dummy._ai.Intent.CHOKING)
+	_dummy._ai.energy = maxf(_dummy._ai.energy - delta * 0.3, 0.05)  # drain faster during windup
+	_dummy._ai.update(delta)
 	var bt := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y
-	_dummy._fin_override = _stand_pose(sin(_t * 30.0) * 1.0 * (1.0 - t))
+	var hy2 := bt - GAP_HB - SZ_HEAD.y / 2.0
+	var by2 := bt + SZ_BODY.y / 2.0
+	var off2 = _dummy._ai.get_offsets_from_rest()
+	var lv2: Vector2 = _dummy._ai.limbs[2].vel
+	var rv2: Vector2 = _dummy._ai.limbs[3].vel
+	_dummy._fin_override = {
+		"head_ctr": Vector2(off2[0].x, hy2 + off2[0].y),
+		"body_ctr": Vector2(off2[1].x, by2 + off2[1].y),
+		"rot": [off2[0].x * 0.008, off2[1].x * 0.01],
+		"squash": [Vector2.ONE, Vector2.ONE],
+		"tremor": 0.3,
+		"off": off2,
+		"hand_rot": [
+			atan2(lv2.y, lv2.x) if lv2.length() > 5.0 else PI / 2.0,
+			atan2(rv2.y, rv2.x) if rv2.length() > 5.0 else PI / 2.0,
+		],
+	}
+
+	# Camera zooms in during coil
+	if _camera:
+		_camera.zoom = _cam_zoom * (1.0 + t * 0.08)
 
 	if _t >= dur:
-		_hitstop_left = 0.1
-		# RAGDOLL THROW: use dummy's point-based physics
+		# HITSTOP — long freeze for impact weight
+		_hitstop_left = 0.18
+		_p_target_x = _player.global_position.x
 		_dummy.finisher_active = false
 		_dummy._fin_override = {}
-		_dummy.go_ragdoll(Vector2(_dir * 350.0, -200.0), 2000.0)
+		# Throw: FAR forward, HIGH arc — proper launch
+		_dummy.go_ragdoll(Vector2(_dir * 340.0, -240.0), 1700.0)
+		_dummy._ai.set_intent(_dummy._ai.Intent.THROWN)
+		# Camera punch: kick opposite to throw direction (recoil), big shake on release
+		_release_shake = 12.0
+		if _camera:
+			_camera.offset = Vector2(-_dir * 14.0, -6.0)
+		# Impact debris
+		_spawn_impact()
 		_phase = Phase.RELEASE
 		_t = 0.0
-		_player._t_rot = _dir * 0.2
-		_player._h_rot = _dir * 0.1
+		# Player snaps forward from throw follow-through (small step in throw dir)
+		_player._t_rot = _dir * 0.18
+		_player._h_rot = _dir * 0.10
+		_player.global_position.x += _dir * 14.0
 
 	_player.queue_redraw()
 	_dummy.queue_redraw()
@@ -244,21 +334,47 @@ func _do_windup(delta: float) -> void:
 #  RELEASE — player recovers, dummy ragdoll handles itself
 # ═══════════════════════════
 func _do_release(delta: float) -> void:
-	var dur := 0.5
+	var dur := 0.6
 	var t := clampf(_t / dur, 0.0, 1.0)
-	var et := 1.0 - (1.0 - t) * (1.0 - t)
 
-	# Player steps back and relaxes
-	_player.global_position.x = lerpf(_player.global_position.x, _p_target_x - _dir * 50.0, delta * 4.0)
-	_player._t_rot = lerpf(_player._t_rot, 0.0, delta * 4.0)
-	_player._h_rot = lerpf(_player._h_rot, 0.0, delta * 4.0)
+	# Phase 1 (0-30%): throw follow-through — grab hand PUSHES forward
+	# Phase 2 (30-100%): recover — hand returns, player steps back
+	if t < 0.3:
+		var ft := t / 0.3
+		var snap := sin(ft * PI / 2.0)  # ease-out snap
+		# Grab hand extends in throw direction (micro-throw motion)
+		var throw_ext := _dir * 40.0 * snap
+		var sh_y := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y + SZ_BODY.y * 0.25
+		var throw_pos := Vector2(throw_ext + 8.0 * _dir, sh_y + 20.0 - snap * 15.0)
+		if _grab_hand == 1:
+			_player._rh_pos = throw_pos
+			_player._rh_rot = atan2(-0.3, _dir)
+		else:
+			_player._lh_pos = throw_pos
+			_player._lh_rot = atan2(-0.3, _dir)
+		# Body follows through
+		_player._t_rot = _dir * lerpf(0.15, 0.05, ft)
+		_player._h_rot = _dir * 0.06
+		_set_free_hand(delta)
+	else:
+		# Recover phase
+		_player._t_rot = lerpf(_player._t_rot, 0.0, delta * 4.0)
+		_player._h_rot = lerpf(_player._h_rot, 0.0, delta * 4.0)
+		_set_free_hand(delta)
+		_return_grab_hand(delta)
+
+	# Player drifts back to start position
+	_player.global_position.x = lerpf(_player.global_position.x, _p_start_x, delta * 3.0)
 	_recomp()
-	_set_free_hand(delta)
-	_return_grab_hand(delta)
 
+	# Camera: punch decays, zoom eases back
+	_release_shake = maxf(_release_shake - delta * 40.0, 0.0)
 	if _camera:
 		_camera.zoom = _camera.zoom.lerp(_cam_zoom, delta * 3.0)
-		_camera.offset = _camera.offset.lerp(Vector2.ZERO, delta * 5.0)
+		var shake_off := Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _release_shake
+		_camera.offset = _camera.offset.lerp(shake_off, delta * 8.0)
+		if _release_shake < 0.1:
+			_camera.offset = _camera.offset.lerp(Vector2.ZERO, delta * 5.0)
 
 	Engine.time_scale = lerpf(Engine.time_scale, 1.0, delta * 5.0)
 

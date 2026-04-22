@@ -3,6 +3,10 @@ extends StaticBody2D
 
 const OL := Color(0.05, 0.05, 0.05)
 const FL := Color(1.0, 1.0, 1.0)
+const SUIT := Color(0.55, 0.58, 0.62)   # серый деловой костюм
+const TIE := Color(0.18, 0.15, 0.28)    # тёмный галстук
+const BOOT := Color(0.08, 0.08, 0.1)    # чёрные ботинки
+const SHIRT := Color(0.92, 0.92, 0.95)  # полоска воротничка
 const SW := 3.0
 const SZ_HEAD := Vector2(68, 64)
 const SZ_BODY := Vector2(46, 82)
@@ -39,6 +43,8 @@ var finisher_active := false
 var is_downed := false
 var _fin_override := {}
 var _player: Node2D = null
+var _ai = preload("res://scripts/body_ai.gd").new()
+var _hurt: Array = []  # 6 Area2D hurtboxes following ragdoll points
 
 
 func _ready() -> void:
@@ -75,6 +81,18 @@ func _ready() -> void:
 		[4, 5, 30.0],
 		[2, 3, 100.0],
 	]
+	# Init body AI with rest positions
+	_ai.setup_rest_positions(_rest)
+	# 6 hurtboxes: head, body, lhand, rhand, lfoot, rfoot
+	_hurt = [
+		get_node_or_null("HeadHurt"),
+		get_node_or_null("BodyHurt"),
+		get_node_or_null("LHandHurt"),
+		get_node_or_null("RHandHurt"),
+		get_node_or_null("LFootHurt"),
+		get_node_or_null("RFootHurt"),
+	]
+
 	await get_tree().process_frame
 	_player = get_parent().get_node_or_null("Player")
 
@@ -103,7 +121,11 @@ func _physics_process(delta: float) -> void:
 				_hit_in[0] = false
 				_hit_in[1] = false
 
-	_upd_blood(delta)
+	# Sync ALL 6 hurtboxes to ragdoll positions
+	for i in mini(_hurt.size(), _pos.size()):
+		if _hurt[i]:
+			_hurt[i].position = _pos[i]
+
 	if _shake > 0.3:
 		var cam := get_viewport().get_camera_2d()
 		if cam:
@@ -112,12 +134,12 @@ func _physics_process(delta: float) -> void:
 
 
 func _sim_standing(delta: float) -> void:
-	var breath := sin(_bt * 2.8) * 1.5
-	var tr := Vector2(sin(_bt * 47) * _tremor, cos(_bt * 53) * _tremor)
+	# Use BodyAI for standing behavior (includes schizo twitches)
+	_ai.update(delta)
+	var ai_pos = _ai.get_positions()
+	# Spring toward AI-computed positions
 	for i in 6:
-		var target := _rest[i] + tr
-		if i == 0: target.y += breath * 0.6
-		elif i == 1: target.y += breath
+		var target: Vector2 = ai_pos[i]
 		_vel[i] += (100.0 * (target - _pos[i]) - 10.0 * _vel[i]) * delta
 		_pos[i] += _vel[i] * delta
 
@@ -171,10 +193,20 @@ func reset_standing() -> void:
 
 func _check_hit(hand_idx: int) -> void:
 	if _player == null: return
+	if not _player._ph_on[hand_idx]:
+		_hit_in[hand_idx] = false
+		return
+	# Only check during STRIKE phase (not windup)
+	var pt: float = _player._ph_t[hand_idx]
+	var wf = _player.PUNCH_WINDUP / (_player.PUNCH_WINDUP + _player.PUNCH_STRIKE)
+	if pt < wf:
+		_hit_in[hand_idx] = false  # RESET for each new punch windup
+		return
 	var hp: Vector2 = _player._lh_pos if hand_idx == 0 else _player._rh_pos
 	var local := hp + _player.global_position - global_position
-	var in_head := local.distance_to(_pos[0]) < 45
-	var in_body := local.distance_to(_pos[1]) < 50
+	# Bigger hitboxes for reliable detection
+	var in_head := local.distance_to(_pos[0]) < 50
+	var in_body := local.distance_to(_pos[1]) < 55
 	var hit := -1
 	if in_head: hit = 0
 	elif in_body: hit = 1
@@ -182,25 +214,45 @@ func _check_hit(hand_idx: int) -> void:
 		_hit_in[hand_idx] = true
 		var pd: Vector2 = _player._ph_dir[hand_idx]
 		_register_hit(local, hit, pd)
-	elif hit < 0:
-		_hit_in[hand_idx] = false
 
 
-func _register_hit(hit_pos: Vector2, part: int, dir: Vector2) -> void:
+func _register_hit(_hit_pos: Vector2, part: int, dir: Vector2) -> void:
 	_hit_count += 1
-	_flash = 0.1
-	_tremor = 3.0
-	var force := 80.0 + float(_hit_count) * 2.0
+	_flash = 0.08
 	var d := dir.normalized()
-	_vel[part] += d * force * 1.5
-	for i in 6:
-		if i != part:
-			_vel[i] += d * force * 0.3 + Vector2(randf_range(-15, 15), randf_range(-10, 5))
-	_wounds.append([part, hit_pos - _pos[part], dir])
-	for _i in randi_range(3, 7):
-		_blood.append([hit_pos, d.rotated(randf_range(-0.5, 0.5)) * randf_range(40, 120), randf_range(0.3, 0.7)])
-	_shake = clampf(2.0 + float(_hit_count) * 0.08, 0.0, 8.0)
-	global_position.x += d.x * force * 0.3
+	var force := 70.0 + float(_hit_count) * 1.5
+
+	# === HIT PHYSICS ===
+	# Direct hit: hit part takes full force
+	_vel[part] += d * force * 2.0
+
+	# HEAD HIT: head snaps back, body follows less, hands jolt
+	if part == 0:
+		_vel[0] += d * force * 1.5 + Vector2(0, -force * 0.3)  # head snaps UP from impact
+		_vel[1] += d * force * 0.5  # body follows
+		_vel[2] += Vector2(randf_range(-20, 20), randf_range(-15, 5))  # hands jolt
+		_vel[3] += Vector2(randf_range(-20, 20), randf_range(-15, 5))
+		_vel[4] += d * force * 0.15  # feet barely
+		_vel[5] += d * force * 0.15
+
+	# BODY HIT: body crunches, head whips forward, hands flail
+	elif part == 1:
+		_vel[1] += d * force * 1.0
+		_vel[0] += d * force * 0.7 + Vector2(d.x * 20.0, 10.0)  # head whips
+		_vel[2] += d * force * 0.6 + Vector2(randf_range(-30, 30), randf_range(-10, 10))
+		_vel[3] += d * force * 0.6 + Vector2(randf_range(-30, 30), randf_range(-10, 10))
+		_vel[4] += d * force * 0.25
+		_vel[5] += d * force * 0.25
+
+	# Feed AI
+	_ai.receive_hit(d, force)
+	_ai.panic = minf(_ai.panic + 0.15, 1.0)
+
+	# Screen shake proportional to force
+	_shake = clampf(force * 0.04, 1.0, 6.0)
+
+	# Pushback (whole dummy slides)
+	global_position.x += d.x * force * 0.2
 
 
 func _upd_blood(delta: float) -> void:
@@ -219,31 +271,41 @@ func _upd_blood(delta: float) -> void:
 func _draw() -> void:
 	if finisher_active and not _fin_override.is_empty():
 		_draw_override(); return
-	var fill := Color(1.0, 0.35, 0.25) if _flash > 0.0 else FL
-	for s in _stains:
-		var sp: Vector2 = s[0]; var ss: float = s[1]
-		draw_rect(Rect2(sp.x - ss, GND - 1, ss * 2, 2), BLD_DARK)
-	for b in _blood:
-		var bp: Vector2 = b[0]; var bl: float = b[2]; var bs := lerpf(2, 4, bl)
-		draw_rect(Rect2(bp.x - bs / 2, bp.y - bs / 2, bs, bs), Color(BLD_MID, bl))
+	var flash_col := Color(1.0, 0.35, 0.25)
+	var body_fill := flash_col if _flash > 0.0 else SUIT
+	var foot_fill := flash_col if _flash > 0.0 else BOOT
 
 	var hr := clampf(_vel[0].x * 0.003, -0.3, 0.3)
 	var br := clampf(_vel[1].x * 0.002, -0.2, 0.2)
 	_draw_hand(_pos[2], true)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	_draw_box(_pos[4], SZ_FOOT, fill)
-	_draw_box(_pos[5], SZ_FOOT, fill)
+	_draw_box(_pos[4], SZ_FOOT, foot_fill)
+	_draw_box(_pos[5], SZ_FOOT, foot_fill)
 	draw_set_transform(_pos[1], br, Vector2.ONE)
+	# Корпус (пиджак)
 	draw_rect(Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW), OL)
-	draw_rect(Rect2(-SZ_BODY.x / 2.0, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x, SZ_BODY.y - 4), fill)
-	_draw_wounds(1, SZ_BODY)
+	draw_rect(Rect2(-SZ_BODY.x / 2.0, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x, SZ_BODY.y - 4), body_fill)
+	# Белая полоска воротничка у шеи
+	if _flash <= 0.0:
+		draw_rect(Rect2(-14.0, -SZ_BODY.y / 2.0 + 4, 28.0, 4.0), SHIRT)
+		# Галстук
+		var tie_w := 9.0
+		var tie_top := -SZ_BODY.y / 2.0 + 8
+		var tie_bot := SZ_BODY.y / 2.0 - 6
+		draw_rect(Rect2(-tie_w / 2.0, tie_top, tie_w, tie_bot - tie_top), TIE)
+		# Треугольный «узел» галстука сверху
+		var knot := PackedVector2Array([
+			Vector2(-tie_w / 2.0 - 2, tie_top),
+			Vector2(tie_w / 2.0 + 2, tie_top),
+			Vector2(0, tie_top + 6),
+		])
+		draw_polygon(knot, PackedColorArray([TIE]))
 	draw_set_transform(_pos[0], hr, Vector2.ONE)
 	if _thead:
 		draw_texture_rect(_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false)
 	else:
 		draw_rect(Rect2(-SZ_HEAD.x / 2.0 - SW, -SZ_HEAD.y / 2.0 - SW, SZ_HEAD.x + SW * 2, SZ_HEAD.y + SW * 2), OL)
-		draw_rect(Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), fill)
-	_draw_wounds(0, SZ_HEAD)
+d		draw_rect(Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), fill)
 	_draw_eyes()
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_hand(_pos[3], false)
@@ -262,14 +324,40 @@ func _draw_override() -> void:
 	var hc: Vector2 = _fin_override.get("head_ctr", _pos[0])
 	var bc: Vector2 = _fin_override.get("body_ctr", _pos[1])
 	var ra = _fin_override.get("rot", [0.0, 0.0])
+	var off_arr = _fin_override.get("off", [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+
+	# Compute part positions from offsets
+	var bt := GND - SZ_FOOT.y - 36.0 - SZ_BODY.y
+	var sh_y := bt + SZ_BODY.y * 0.25
+	var foot_y := GND - SZ_FOOT.y / 2.0
+	var lh_p := Vector2(-SZ_BODY.x / 2.0 - 8, sh_y + 50) + Vector2(off_arr[2])
+	var rh_p := Vector2(SZ_BODY.x / 2.0 + 8, sh_y + 50) + Vector2(off_arr[3])
+	var lf_p := Vector2(-8, foot_y) + Vector2(off_arr[4])
+	var rf_p := Vector2(8, foot_y) + Vector2(off_arr[5])
+
+	# Hand rotations from AI (or default PI/2)
+	var hr = _fin_override.get("hand_rot", [PI / 2.0, PI / 2.0])
+	var lr: float = hr[0]
+	var rr: float = hr[1]
+
+	# Back hand
+	_draw_hand_r(lh_p, true, lr)
+	# Feet
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_draw_box(lf_p, SZ_FOOT, fill)
+	_draw_box(rf_p, SZ_FOOT, fill)
+	# Body
 	draw_set_transform(bc, float(ra[1]), Vector2.ONE)
 	draw_rect(Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW), OL)
 	draw_rect(Rect2(-SZ_BODY.x / 2.0, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x, SZ_BODY.y - 4), fill)
+	# Head
 	draw_set_transform(hc, float(ra[0]), Vector2.ONE)
 	if _thead:
 		draw_texture_rect(_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false)
 	_draw_eyes()
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# Front hand
+	_draw_hand_r(rh_p, false, rr)
 
 
 func _draw_eyes() -> void:
@@ -297,6 +385,18 @@ func _draw_wounds(part: int, sz: Vector2) -> void:
 		var perp := Vector2(-dir.y, dir.x)
 		draw_line(off - perp * 6, off + perp * 6, BLD_MID, 3.0)
 		draw_line(off - perp * 4, off + perp * 4, BLD_DARK, 2.0)
+
+
+func _draw_hand_r(pos: Vector2, is_left: bool, rot: float) -> void:
+	var tex := _to if is_left else _ti
+	if tex:
+		draw_set_transform(pos, rot, Vector2.ONE)
+		draw_texture_rect(tex, Rect2(-HAND_SZ / 2.0, HAND_SZ), false)
+	else:
+		draw_set_transform(pos, rot, Vector2.ONE)
+		draw_rect(Rect2(-HAND_SZ.x / 2.0 - SW, -HAND_SZ.y / 2.0 - SW, HAND_SZ.x + SW * 2, HAND_SZ.y + SW * 2), OL)
+		draw_rect(Rect2(-HAND_SZ.x / 2.0, -HAND_SZ.y / 2.0, HAND_SZ.x, HAND_SZ.y), FL)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _draw_hand(pos: Vector2, is_left: bool) -> void:

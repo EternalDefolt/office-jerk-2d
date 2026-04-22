@@ -1,28 +1,65 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=9 format=3 uid="uid://c73ifc38vcm5c"]
 
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
-[ext_resource type="Script" path="res://scripts/floor_draw.gd" id="2_floor"]
+[ext_resource type="PackedScene" path="res://scenes/tiled_floor.tscn" id="2_floor"]
 [ext_resource type="PackedScene" path="res://scenes/dummy.tscn" id="3_dummy"]
-[ext_resource type="Script" path="res://scripts/finisher.gd" id="4_finisher"]
+[ext_resource type="Script" uid="uid://0jb84h4ioxvj" path="res://scripts/finisher.gd" id="4_finisher"]
+[ext_resource type="Script" uid="uid://7xlbi80s8lhg" path="res://scripts/office_bg.gd" id="5_bg"]
+[ext_resource type="PackedScene" path="res://scenes/tiled_wall.tscn" id="6_wall"]
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
-size = Vector2(5000, 20)
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_bottom"]
+size = Vector2(1280, 40)
 
-[node name="Main" type="Node2D"]
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_side"]
+size = Vector2(40, 400)
 
-[node name="Player" parent="." instance=ExtResource("1_player")]
-position = Vector2(640, 380)
+[node name="Main" type="Node2D" unique_id=1397848633]
 
-[node name="Dummy" parent="." instance=ExtResource("3_dummy")]
-position = Vector2(900, 380)
+[node name="OfficeBG" type="Node2D" parent="." unique_id=37834351]
+z_index = -10
+texture_filter = 1
+script = ExtResource("5_bg")
 
-[node name="Finisher" type="Node2D" parent="."]
+[node name="TiledWall" parent="." unique_id=681626764 instance=ExtResource("6_wall")]
+texture_filter = 1
+texture_repeat = 2
+
+[node name="TiledFloor" parent="." unique_id=77619976 instance=ExtResource("2_floor")]
+texture_filter = 1
+texture_repeat = 2
+position = Vector2(0, 464)
+
+[node name="Boundaries" type="Node2D" parent="."]
+
+[node name="BottomWall" type="StaticBody2D" parent="Boundaries"]
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/BottomWall"]
+position = Vector2(640, 740)
+shape = SubResource("RectangleShape2D_bottom")
+
+[node name="LeftWall" type="StaticBody2D" parent="Boundaries"]
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/LeftWall"]
+position = Vector2(-20, 664)
+shape = SubResource("RectangleShape2D_side")
+
+[node name="RightWall" type="StaticBody2D" parent="Boundaries"]
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/RightWall"]
+position = Vector2(1300, 664)
+shape = SubResource("RectangleShape2D_side")
+
+[node name="Dummy" parent="." unique_id=1712583024 instance=ExtResource("3_dummy")]
+position = Vector2(900, 480)
+
+[node name="Player" parent="." unique_id=613160646 instance=ExtResource("1_player")]
+position = Vector2(621, 500)
+
+[node name="Finisher" type="Node2D" parent="." unique_id=1746251529]
 script = ExtResource("4_finisher")
-
-[node name="Floor" type="StaticBody2D" parent="."]
-position = Vector2(0, 493)
-script = ExtResource("2_floor")
-
-[node name="Collision" type="CollisionShape2D" parent="Floor"]
-position = Vector2(0, 10)
-shape = SubResource("RectangleShape2D_1")

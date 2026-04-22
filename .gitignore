@@ -3,6 +3,21 @@
 /android/
 *.import
 
+# Dev screenshots (auto-generated for Claude analysis)
+dev_screenshots/
+
+# Downloaded tool data / temp assets
+tools/
+
+# Claude Code / AI tooling state
+.claude/
+.claude-flow/
+.swarm/
+.chrome_profile/
+.gemini_session/
+.mcp.json
+scripts/.gemini_session/
+
 # OS
 .DS_Store
 Thumbs.db

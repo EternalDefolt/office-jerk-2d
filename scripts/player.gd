@@ -40,16 +40,31 @@ const GND := 113.0
 # ════════════════════════════════════════════════════════════════
 #  WALK CYCLE  (time-based cadence, NOT distance-based)
 # ════════════════════════════════════════════════════════════════
-const WALK_CADENCE := 1.4     # Hz — grounded, deliberate
-const SPRINT_CADENCE := 1.8   # Hz — brisk but not frantic
-const STRIDE_MAX := 50.0
-const SPRINT_STRIDE := 68.0
-const STEP_HEIGHT := 14.0
-const SPRINT_STEP_H := 10.0   # shorter lift at sprint (quick low steps)
-const WALK_BLEND_IN := 12.0
-const WALK_BLEND_OUT := 8.0
-const FOOT_TOE_OFF := -0.15   # subtle toe-off
-const FOOT_HEEL_STRIKE := 0.12 # subtle heel-strike
+const WALK_CADENCE := 1.55    # Hz — deliberate stride, not hurried
+const SPRINT_CADENCE := 2.5   # Hz — clearly faster than walk, not frantic
+const STRIDE_MAX := 48.0
+const SPRINT_STRIDE := 72.0
+const STEP_HEIGHT := 15.0
+const SPRINT_STEP_H := 13.0
+const WALK_BLEND_IN := 10.0   # slower ease-in feels more natural
+const WALK_BLEND_OUT := 7.0
+## В Godot 2D Y направлен вниз, положительный угол = clockwise в экране.
+## Для правой стопы (toe-pivot = правый край), чтобы пятка поднялась ВВЕРХ
+## относительно пивота — нужен ПОЛОЖИТЕЛЬНЫЙ угол. Раньше знаки были перевёрнуты,
+## из-за чего носок/пятка проваливались под линию пола → стопа «просаживалась».
+const FOOT_TOE_OFF := 0.18      # push-off: пятка идёт вверх, пивот на носке
+const FOOT_HEEL_STRIKE := -0.14 # heel-strike: носок идёт вверх, пивот на пятке
+const FOOT_SWING_LIFT := -0.25  # dorsiflexion: носок вверх в середине swing'а (пивот в центре)
+const WALK_HIP_DROP := 3.2    # body dip on footfall (weighted)
+const SPRINT_HIP_DROP := 5.5  # bigger dip on run impact
+const SPRINT_LEAN := 0.10     # forward torso lean while sprinting (rad)
+const SPRINT_FLIGHT := 2.2    # brief airborne rise between footfalls
+
+# Arm swing amplitudes — TIGHT. Overshoot handled by spring tracking.
+const ARM_SWING_WALK := 14.0      # baseline forward/back arm reach (px)
+const ARM_SWING_SPRINT_BONUS := 8.0 # added on top when sprinting (total = 22)
+const ARM_DIP_WALK := 3.0         # vertical dip at mid-swing
+const ARM_DIP_SPRINT_BONUS := 2.0 # total dip at sprint = 5
 
 # ════════════════════════════════════════════════════════════════
 #  BREATHING  (3-layer sine for organic feel)
@@ -136,7 +151,6 @@ var _land_tmr := 0.0
 var _squash := 0.0
 var _coyote := 0.0
 var _jbuf := 0.0
-var _prev_dir := 1.0
 var _dir := 1.0
 var _vdir := 1.0              # smoothed visual direction for body lean
 var _sprinting := false
@@ -144,9 +158,6 @@ var _mouse_lean := 0.0        # smooth lean toward mouse
 
 # combat
 var _cs := CS.NONE
-var _combo_tmr := 0.0         # time left in current punch
-var _combo_window := 0.0      # time left to chain next hit
-var _punch_t := 0.0           # 0→1 progress of current punch
 var _blocking := false
 var _lmb_prev := false
 var _block_blend := 0.0
@@ -197,6 +208,10 @@ var _hoff := Vector2.ZERO
 var _hvel := Vector2.ZERO
 var _htilt := 0.0
 
+# Fist Area2D nodes (positioned each frame to follow hands)
+var _lf_area: Area2D
+var _rf_area: Area2D
+
 # composite per-part transforms
 var _t_pos := Vector2.ZERO    # torso position (top-left relative)
 var _t_ctr := Vector2.ZERO    # torso center
@@ -229,6 +244,9 @@ func _ready() -> void:
 		var img := _to.get_image()
 		img.flip_x()
 		_tof = ImageTexture.create_from_image(img)
+	# Fist Area2D nodes
+	_lf_area = get_node_or_null("LeftFist")
+	_rf_area = get_node_or_null("RightFist")
 	# Init hand positions at rest
 	var sh_y := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y + SZ_BODY.y * 0.15
 	_lh_trk = Vector2(-(SZ_BODY.x / 2.0 + SHOULDER_OFF), sh_y + HAND_LEN)
@@ -243,27 +261,28 @@ func _physics_process(delta: float) -> void:
 	if finisher_active:
 		queue_redraw()
 		return
-	# ── Gravity ──
-	if not is_on_floor():
-		velocity.y += GRAVITY * delta
-
-	# ── Input ──
+	# ── Input (4-directional, no gravity) ──
 	var h := Input.get_axis("ui_left", "ui_right")
 	if Input.is_physical_key_pressed(KEY_A):
 		h = -1.0
 	if Input.is_physical_key_pressed(KEY_D):
 		h = 1.0
+	var v := 0.0
+	if Input.is_physical_key_pressed(KEY_W) or Input.is_action_pressed("ui_up"):
+		v = -1.0
+	if Input.is_physical_key_pressed(KEY_S) or Input.is_action_pressed("ui_down"):
+		v = 1.0
 
 	# Sprint
-	_sprinting = Input.is_physical_key_pressed(KEY_SHIFT) and is_on_floor() and absf(h) > 0.1
+	_sprinting = Input.is_physical_key_pressed(KEY_SHIFT) and (absf(h) > 0.1 or absf(v) > 0.1)
 	var cur_max := SPRINT_SPEED if _sprinting else MAX_SPEED
 
-	# Inertial horizontal movement
-	var tgt := h * cur_max
-	var a := DECEL
-	if h != 0.0:
-		a = ACCEL if is_on_floor() else AIR_ACCEL
-	velocity.x = move_toward(velocity.x, tgt, a * delta)
+	# Inertial movement (both axes)
+	var tgt_x := h * cur_max
+	var tgt_y := v * cur_max * 0.7  # vertical slower (perspective)
+	var a := ACCEL if (absf(h) > 0.1 or absf(v) > 0.1) else DECEL
+	velocity.x = move_toward(velocity.x, tgt_x, a * delta)
+	velocity.y = move_toward(velocity.y, tgt_y, a * delta)
 
 	# Facing: follows MOUSE position (not movement)
 	var mouse_w := get_global_mouse_position()
@@ -284,29 +303,12 @@ func _physics_process(delta: float) -> void:
 	mouse_lean_tgt += clampf(-to_mouse.y / 400.0, -0.5, 0.5) * 0.03
 	_mouse_lean = lerpf(_mouse_lean, mouse_lean_tgt, delta * 8.0)
 
-	# Jump buffer
-	if Input.is_action_just_pressed("ui_up") or Input.is_action_just_pressed("ui_accept"):
-		_jbuf = JUMP_BUF_T
-
-	# ── Coyote time ──
-	if is_on_floor():
-		_coyote = COYOTE_T
-	else:
-		_coyote = maxf(_coyote - delta, 0.0)
-
-	# ── Jump squat completion (pre-move) ──
-	if _js == JS.SQUAT:
-		_squat_tmr -= delta
-		if _squat_tmr <= 0.0:
-			velocity.y = JUMP_VEL
-			_js = JS.RISING
-			# Jump: hands fly down, head snaps up, body compresses
-			_lh_tv.y += 200.0
-			_rh_tv.y += 200.0
-			_hvel.y -= 60.0
-			_lean_v += velocity.x * 0.05  # lean in movement direction
+	# No jump in diorama mode — 4-directional walk
 
 	# ── Move ──
+	# Коллизия с Dummy теперь через настоящий StaticBody2D (см. dummy.tscn),
+	# не через hardcoded проверку X-расстояния. Можно свободно обходить
+	# dummy сверху/снизу по Y.
 	move_and_slide()
 
 	# ── Acceleration tracking ──
@@ -316,7 +318,7 @@ func _physics_process(delta: float) -> void:
 	_jbuf = maxf(_jbuf - delta, 0.0)
 
 	# ── Post-move state machine ──
-	var on_fl := is_on_floor()
+	var on_fl := true
 	match _js:
 		JS.GROUND:
 			if not on_fl:
@@ -417,7 +419,7 @@ func _upd_combat(delta: float) -> void:
 	var any_punching := false
 	for hi in 2:
 		if _ph_on[hi]:
-			var prev_t: float = _ph_t[hi]
+			var _prev_t: float = _ph_t[hi]
 			_ph_tmr[hi] -= delta
 			_ph_t[hi] = 1.0 - _ph_tmr[hi] / (PUNCH_WINDUP + PUNCH_STRIKE)
 			# Strike moment: when crossing from windup to strike phase → body lurches
@@ -496,8 +498,10 @@ func _upd_face(delta: float) -> void:
 # ════════════════════════════════════════════════════════════════
 func _upd_walk(delta: float) -> void:
 	var cur_max := SPRINT_SPEED if _sprinting else MAX_SPEED
-	_spd_r = clampf(absf(velocity.x) / cur_max, 0.0, 1.0)
-	var walking := is_on_floor() and _spd_r > 0.05
+	# Включаем walk cycle при движении в ЛЮБОМ направлении, не только по X.
+	# Используем общую длину скорости — тогда ходьба вверх/вниз тоже двигает ноги.
+	_spd_r = clampf(velocity.length() / cur_max, 0.0, 1.0)
+	var walking := _spd_r > 0.05
 
 	if walking:
 		_wblend = minf(_wblend + WALK_BLEND_IN * delta, 1.0)
@@ -544,7 +548,7 @@ func _upd_lean(delta: float) -> void:
 # ════════════════════════════════════════════════════════════════
 #  PENDULUM HANDS  (damped pendulums with walk drive & body coupling)
 # ════════════════════════════════════════════════════════════════
-func _upd_hands(delta: float) -> void:
+func _upd_hands(_delta: float) -> void:
 	# Hands are spring-tracked to shoulder+hang targets
 	# Movement comes from body movement (bob, sway, lean) + impulses (turn, jump, land)
 	# NO explicit walk animation — just physics response to body motion
@@ -604,7 +608,12 @@ func _upd_squash(delta: float) -> void:
 
 
 # ════════════════════════════════════════════════════════════════
-#  WALK STEP CURVE  (smoothstep easing, toe-off / heel-strike)
+#  WALK STEP CURVE  (5-фазная раскадровка по скетчу LO)
+#  Phase 0.00-0.10 — stance: стопа за центром, контакт
+#  Phase 0.10-0.50 — stance: ровно скользит назад (константная скорость)
+#  Phase 0.50-0.60 — push-off: носок отрывается, пятка поднимается
+#  Phase 0.60-0.80 — mid-swing: нога высоко, летит вперёд по дуге
+#  Phase 0.80-1.00 — heel-strike: носок вниз, приземление под углом
 # ════════════════════════════════════════════════════════════════
 func _step(ph: float, stride: float, step_h: float = STEP_HEIGHT) -> Array:
 	var n := fposmod(ph, TAU) / TAU
@@ -614,28 +623,44 @@ func _step(ph: float, stride: float, step_h: float = STEP_HEIGHT) -> Array:
 	var pv := 0.0
 
 	if n < 0.5:
-		# ── STANCE: foot on ground, slides backward ──
+		# ── STANCE: стопа на земле, скользит назад с постоянной скоростью.
 		var t := n / 0.5
-		var et := _ss(t)
-		x = lerpf(stride * 0.5, -stride * 0.5, et)
-		# Toe-off at end of stance (heel lifts)
-		if t > 0.82:
-			var u := (t - 0.82) / 0.18
-			ang = u * FOOT_TOE_OFF  # negative → heel up
-			pv = 1.0               # pivot at toe
+		x = lerpf(stride * 0.5, -stride * 0.5, t)
+		y = 0.0
+		if t < 0.10:
+			# Heel-strike settle: пятка приземлилась, носок плавно опускается.
+			var u := t / 0.10
+			ang = lerpf(FOOT_HEEL_STRIKE, 0.0, _ss(u))
+			pv = lerpf(-1.0, 0.0, u)
+		elif t > 0.80:
+			# Toe-off: пятка отрывается, вес переходит на носок.
+			var u := (t - 0.80) / 0.20
+			ang = _ss(u) * FOOT_TOE_OFF
+			pv = 1.0
+		# middle (10%-80%) — стопа плоско на земле
 	else:
-		# ── SWING: foot in air, arcs forward ──
+		# ── SWING: стопа в воздухе, летит вперёд.
 		var t := (n - 0.5) / 0.5
 		var et := _ss(t)
 		x = lerpf(-stride * 0.5, stride * 0.5, et)
 		y = -step_h * sin(t * PI)
-		# Transition from toe-off → neutral → heel-strike
-		if t < 0.2:
-			ang = lerpf(FOOT_TOE_OFF, 0.0, t / 0.2)
-			pv = 1.0
-		elif t > 0.82:
-			ang = ((t - 0.82) / 0.18) * FOOT_HEEL_STRIKE
-			pv = -1.0             # pivot at heel
+
+		if t < 0.25:
+			# Phase A — выход из toe-off: пятка ещё задрана, плавно выравнивается.
+			var u := t / 0.25
+			ang = lerpf(FOOT_TOE_OFF, 0.0, _ss(u))
+			pv = lerpf(1.0, 0.0, u)
+		elif t < 0.75:
+			# Phase B — mid-swing dorsiflexion: НОСОК ПОДНЯТ, стопа видно в наклоне.
+			# Bell-curve по sin, пик в t=0.5 — это Frame 3 из твоей раскадровки.
+			var u := (t - 0.25) / 0.50
+			ang = FOOT_SWING_LIFT * sin(u * PI)
+			pv = 0.0
+		else:
+			# Phase C — подготовка к heel-strike: носок продолжает вверх, приземление.
+			var u := (t - 0.75) / 0.25
+			ang = lerpf(0.0, FOOT_HEEL_STRIKE, _ss(u))
+			pv = lerpf(0.0, -1.0, u)
 
 	return [x, y, ang, pv]
 
@@ -656,15 +681,29 @@ func _compose() -> void:
 	var br_sx := bv * BR_SCALE * idle_f
 	var br_sy := -bv * BR_SCALE * idle_f
 
-	# ── Walk bob (V-shape dips, softer at sprint) ──
-	var bob_amp := lerpf(3.0, 1.8, clampf(arm_spd_raw - 1.0, 0.0, 1.0))
-	var wbob := -absf(sin(_wphase)) * bob_amp * _wblend * _spd_r
+	# ── Walk bob: footfall DROP (weighted) + sprint FLIGHT phase (airborne) ──
+	# sprint_f: binary sprint scaled by speed — full effect only when shift held AND moving
+	var sprint_f := (1.0 if _sprinting else 0.0) * _spd_r
+	var hip_drop := lerpf(WALK_HIP_DROP, SPRINT_HIP_DROP, sprint_f)
+	var footfall := absf(sin(_wphase))          # 0 = mid-swing, 1 = footfall impact
+	var wbob := footfall * hip_drop * _wblend * _spd_r   # +Y = drop on impact
+	# Sprint flight phase: between footfalls, body rises briefly (both feet off ground)
+	if _sprinting:
+		var flight := (1.0 - footfall) * SPRINT_FLIGHT * _wblend * _spd_r * sprint_f
+		wbob -= flight
 
-	# ── Walk lateral shift (weight transfer between feet) ──
-	var wshift := sin(_wphase) * 3.5 * _wblend * _spd_r
+	# ── Walk lateral shift (weight transfer between feet) — bigger at sprint ──
+	var shift_amp := lerpf(3.5, 5.5, sprint_f)
+	var wshift := sin(_wphase) * shift_amp * _wblend * _spd_r
 
-	# ── Walk hip rotation (subtle twist with each step) ──
-	var whip := sin(_wphase) * 0.012 * _wblend * _spd_r
+	# ── Walk hip rotation (twist with each step) — amplified on run ──
+	var hip_amp := lerpf(0.012, 0.028, sprint_f)
+	var whip := sin(_wphase) * hip_amp * _wblend * _spd_r
+
+	# ── Sprint forward lean (torso pitches into the run) ──
+	var sprint_lean := 0.0
+	if _sprinting:
+		sprint_lean = SPRINT_LEAN * _spd_r * sprint_f * _vdir
 
 	# ── Air tilt: body leans in velocity direction during jump ──
 	var air_lean := 0.0
@@ -676,10 +715,10 @@ func _compose() -> void:
 		else:
 			air_lean -= _dir * 0.02  # lean forward on descent
 
-	# ── Total rotation (movement + mouse + air) ──
+	# ── Total rotation (movement + mouse + air + sprint lean) ──
 	var cur_max := SPRINT_SPEED if _sprinting else MAX_SPEED
 	var run_lean := velocity.x / cur_max * LEAN_RUN
-	var total_rot := _lean + run_lean + _sway + whip + _mouse_lean + air_lean + _punch_body_lean
+	var total_rot := _lean + run_lean + _sway + whip + _mouse_lean + air_lean + _punch_body_lean + sprint_lean
 
 	# ── TORSO ──
 	var base_top := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y
@@ -722,7 +761,7 @@ func _compose() -> void:
 	var l_sh := Vector2(_t_ctr.x - SZ_BODY.x / 2.0 - SHOULDER_OFF, sh_y)
 	var r_sh := Vector2(_t_ctr.x + SZ_BODY.x / 2.0 + SHOULDER_OFF, sh_y)
 
-	# Target: just shoulder hang (NO walk swing — spring tracks body only)
+	# Target: fist hangs below shoulder at HAND_LEN — Madness-style floating disconnected fist
 	var l_tgt := l_sh + Vector2(0, HAND_LEN)
 	var r_tgt := r_sh + Vector2(0, HAND_LEN)
 
@@ -745,12 +784,12 @@ func _compose() -> void:
 		_rh_tv.y += (HAND_K * 0.6 * (r_tgt.y - _rh_trk.y) - HAND_D * _rh_tv.y + grav_pull) * sdt
 		_rh_trk += _rh_tv * sdt
 
-	# Walk swing amplitude (ease-in-out on speed)
-	var arm_spd := clampf(absf(velocity.x) / MAX_SPEED, 0.0, 2.0)
-	var spd_eased := arm_spd * arm_spd * (3.0 - 2.0 * minf(arm_spd, 1.0))
-	# Walk: normal swing. Sprint: bigger swing
-	var arm_h := 18.0 * _wblend * spd_eased
-	var dip_base := 4.0 * _wblend * spd_eased
+	# Arm swing — CLAMPED smoothstep [0,1], tight amplitude, no runaway growth
+	var walk_r := clampf(absf(velocity.x) / MAX_SPEED, 0.0, 1.0)  # 0-1 always
+	var walk_eased := walk_r * walk_r * (3.0 - 2.0 * walk_r)      # proper smoothstep
+	# Walk baseline + sprint bonus (additive, not multiplicative — no runaway)
+	var arm_h := (ARM_SWING_WALK * walk_eased + ARM_SWING_SPRINT_BONUS * sprint_f) * _wblend
+	var dip_base := (ARM_DIP_WALK * walk_eased + ARM_DIP_SPRINT_BONUS * sprint_f) * _wblend
 
 	# Asymmetric curves (different feel, same energy)
 	var l_raw := sin(_wphase + 0.15)
@@ -861,6 +900,8 @@ func _compose() -> void:
 					var t := (st - 0.8) / 0.2
 					punch_pos = endpoint.lerp(endpoint - pd * 8.0, t)
 
+			# FIST COLLISION: stop at dummy surface, don't pass through
+			punch_pos = _clamp_fist_to_surface(punch_pos, pd)
 			hand_poses[hi] = punch_pos
 			hand_rots[hi] = trot
 			_ph_end_pos[hi] = punch_pos
@@ -873,16 +914,31 @@ func _compose() -> void:
 			hand_poses[hi] = end_pos.lerp(idle_pos, 1.0 - r)
 			# Rotation: just use idle rot (no spinning from punch direction)
 
-	# Schizo tremor: amplified during combat
-	var combat_tremor := 3.0 if (_cs == CS.PUNCHING) else 1.0
-	var tr_amp := TREMOR_AMP * combat_tremor
-	var tr_l := Vector2(sin(_bt * 37.0) * tr_amp, cos(_bt * 41.0) * tr_amp)
-	var tr_r := Vector2(sin(_bt * 43.0 + 1.7) * tr_amp, cos(_bt * 31.0 + 2.3) * tr_amp)
+	# Tremor: ONLY during combat (punching tension). Idle/walk hands are CALM.
+	var tr_l := Vector2.ZERO
+	var tr_r := Vector2.ZERO
+	if _cs == CS.PUNCHING:
+		var tr_amp := TREMOR_AMP * 3.0
+		tr_l = Vector2(sin(_bt * 37.0) * tr_amp, cos(_bt * 41.0) * tr_amp)
+		tr_r = Vector2(sin(_bt * 43.0 + 1.7) * tr_amp, cos(_bt * 31.0 + 2.3) * tr_amp)
 
 	_lh_pos = hand_poses[0] + tr_l
 	_rh_pos = hand_poses[1] + tr_r
 	_lh_rot = hand_rots[0]
 	_rh_rot = hand_rots[1]
+
+	# Sync Area2D fist positions + collision check
+	if _lf_area:
+		_lf_area.position = _lh_pos
+		# If fist overlaps dummy hurtbox, push it back
+		if _lf_area.has_overlapping_areas():
+			_lh_pos = _push_fist_out(_lh_pos)
+			_lf_area.position = _lh_pos
+	if _rf_area:
+		_rf_area.position = _rh_pos
+		if _rf_area.has_overlapping_areas():
+			_rh_pos = _push_fist_out(_rh_pos)
+			_rf_area.position = _rh_pos
 
 	# ── FEET ──
 	var stride_base := SPRINT_STRIDE if _sprinting else STRIDE_MAX
@@ -958,7 +1014,7 @@ func _compose() -> void:
 func _draw() -> void:
 	var back_is_left := _dir > 0.0
 
-	# 1. Back hand
+	# 1. Back hand (Madness Combat style — floating, no arm limb drawn)
 	_dr_hand(back_is_left)
 
 	# 2. Feet (no body lean — feet stay flat on ground)
@@ -1012,7 +1068,7 @@ func _dr_head() -> void:
 	# Convert to head-local space (sx flips X axis)
 	var look_local := look_x * sx
 	var eye_shift_x := look_local * 14.0
-	var eye_shift_y := look_y * 2.0
+	var _eye_shift_y := look_y * 2.0
 	# Total eye pair width
 	var pair_w := eye_w * 2.0 + eye_gap
 	var margin := 3.0
@@ -1083,6 +1139,44 @@ func _dr_hand(is_left: bool) -> void:
 # ════════════════════════════════════════════════════════════════
 #  DRAW PRIMITIVES
 # ════════════════════════════════════════════════════════════════
+func _push_fist_out(fist_pos: Vector2) -> Vector2:
+	var dummy = get_parent().get_node_or_null("Dummy")
+	if dummy == null:
+		return fist_pos
+	# Push fist toward player side of dummy
+	var side := signf(global_position.x - dummy.global_position.x)
+	if absf(side) < 0.1:
+		side = 1.0
+	# Move fist 5px toward player each frame until no longer overlapping
+	return fist_pos + Vector2(side * 8.0, 0)
+
+
+# Legacy fist clamp (kept as backup)
+func _clamp_fist_to_surface(fist_pos: Vector2, _pd: Vector2) -> Vector2:
+	var dummy = get_parent().get_node_or_null("Dummy")
+	if dummy == null or dummy._pos.is_empty():
+		return fist_pos
+
+	var fw = fist_pos + global_position
+	var side := signf(global_position.x - dummy.global_position.x)
+	if absf(side) < 0.1:
+		side = 1.0
+
+	# Head (circle r=42)
+	var hw = dummy._pos[0] + dummy.global_position
+	var dh = fw - hw
+	if dh.length() < 42.0:
+		return (hw + Vector2(side * 42.0, dh.y * 0.4)) - global_position
+
+	# Body (rect 32x48)
+	var bw = dummy._pos[1] + dummy.global_position
+	var db = fw - bw
+	if absf(db.x) < 32.0 and absf(db.y) < 48.0:
+		return (bw + Vector2(side * 32.0, db.y)) - global_position
+
+	return fist_pos
+
+
 func _box(pos: Vector2, sz: Vector2) -> void:
 	draw_rect(Rect2(pos - Vector2(SW, SW), sz + Vector2(SW * 2, SW * 2)), OL)
 	draw_rect(Rect2(pos, sz), FL)
