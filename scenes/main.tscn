@@ -14,6 +14,7 @@ size = Vector2(1280, 40)
 size = Vector2(40, 400)
 
 [node name="Main" type="Node2D" unique_id=1397848633]
+y_sort_enabled = true
 
 [node name="OfficeBG" type="Node2D" parent="." unique_id=37834351]
 z_index = -10

@@ -305,7 +305,7 @@ func _draw() -> void:
 		draw_texture_rect(_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false)
 	else:
 		draw_rect(Rect2(-SZ_HEAD.x / 2.0 - SW, -SZ_HEAD.y / 2.0 - SW, SZ_HEAD.x + SW * 2, SZ_HEAD.y + SW * 2), OL)
-d		draw_rect(Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), fill)
+		draw_rect(Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), body_fill)
 	_draw_eyes()
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_hand(_pos[3], false)
@@ -361,18 +361,35 @@ func _draw_override() -> void:
 
 
 func _draw_eyes() -> void:
-	var ey := 14.0; var ew := 12.0; var eh := 28.0; var eg := 6.0
-	var lx := -eg / 2.0 - ew; var rx := eg / 2.0
+	# Глаза в стиле Player'а: вытянутые чёрные сокеты («глазные яблоки» в тени)
+	# + белые зрачки внутри. Разница только в том, что взгляд Dummy
+	# ФИКСИРОВАН — не следит за Player'ом.
+	var ey := 14.0
+	var ew := 12.0
+	var eh := 28.0
+	var eg := 6.0
+	var lx := -eg / 2.0 - ew
+	var rx := eg / 2.0
 	if _hit_count > 10:
+		# X-eyes после множества попаданий (в отключке)
 		for ex in [lx + ew / 2.0, rx + ew / 2.0]:
 			draw_line(Vector2(ex - 5, ey - 5), Vector2(ex + 5, ey + 5), OL, 2.5)
 			draw_line(Vector2(ex + 5, ey - 5), Vector2(ex - 5, ey + 5), OL, 2.5)
 	else:
+		# Глазные яблоки — чёрные вытянутые прямоугольники (как у Player).
 		draw_rect(Rect2(lx, ey - eh / 2.0, ew, eh), OL)
 		draw_rect(Rect2(rx, ey - eh / 2.0, ew, eh), OL)
-		var fx := 2.0 if _player and _player.global_position.x > global_position.x else -2.0
-		draw_rect(Rect2(lx + ew / 2.0 - 2 + fx, ey - 3, 4, 6), FL)
-		draw_rect(Rect2(rx + ew / 2.0 - 2 + fx, ey - 3, 4, 6), FL)
+		# Белые зрачки 6×8 (того же размера как у Player).
+		# Статично смещены: чуть вправо (смотрит мимо Player'а)
+		# и слегка вниз (пустой усталый взгляд).
+		var pup_w := 6.0
+		var pup_h := 8.0
+		var pup_dx := 1.0
+		var pup_dy := 4.0
+		var le_cx := lx + ew / 2.0
+		var re_cx := rx + ew / 2.0
+		draw_rect(Rect2(le_cx - pup_w / 2.0 + pup_dx, ey - pup_h / 2.0 + pup_dy, pup_w, pup_h), FL)
+		draw_rect(Rect2(re_cx - pup_w / 2.0 + pup_dx, ey - pup_h / 2.0 + pup_dy, pup_w, pup_h), FL)
 
 
 func _draw_wounds(part: int, sz: Vector2) -> void:

@@ -21,3 +21,7 @@ scripts/.gemini_session/
 # OS
 .DS_Store
 Thumbs.db
+
+# Boilerplate / unused
+CLAUDE.md
+assets/img/test_sprite.png

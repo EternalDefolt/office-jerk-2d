@@ -900,8 +900,7 @@ func _compose() -> void:
 					var t := (st - 0.8) / 0.2
 					punch_pos = endpoint.lerp(endpoint - pd * 8.0, t)
 
-			# FIST COLLISION: stop at dummy surface, don't pass through
-			punch_pos = _clamp_fist_to_surface(punch_pos, pd)
+			# (fist-surface clamp отключён — не дёргает руку когда игрок стоит на Dummy)
 			hand_poses[hi] = punch_pos
 			hand_rots[hi] = trot
 			_ph_end_pos[hi] = punch_pos
@@ -927,18 +926,14 @@ func _compose() -> void:
 	_lh_rot = hand_rots[0]
 	_rh_rot = hand_rots[1]
 
-	# Sync Area2D fist positions + collision check
+	# Sync Area2D fist positions для обнаружения ударов.
+	# Больше НЕ двигаем кулак обратно при overlap — это вызывало дрожь,
+	# когда Player стоял внутри зоны Dummy. Detection ударов работает
+	# через `_check_hit` в dummy.gd по дистанции, этого достаточно.
 	if _lf_area:
 		_lf_area.position = _lh_pos
-		# If fist overlaps dummy hurtbox, push it back
-		if _lf_area.has_overlapping_areas():
-			_lh_pos = _push_fist_out(_lh_pos)
-			_lf_area.position = _lh_pos
 	if _rf_area:
 		_rf_area.position = _rh_pos
-		if _rf_area.has_overlapping_areas():
-			_rh_pos = _push_fist_out(_rh_pos)
-			_rf_area.position = _rh_pos
 
 	# ── FEET ──
 	var stride_base := SPRINT_STRIDE if _sprinting else STRIDE_MAX
