@@ -1,0 +1,12 @@
+# Конфигурация gdlint для Office Jerk 2D (gdtoolkit).
+max-line-length: 120
+max-file-lines: 1000
+
+# Отключены два стилистических правила, неудобных для этого проекта:
+#  - class-definitions-order: финишер читает per-part состояние игрока напрямую,
+#    поэтому константы/энумы/переменные сгруппированы по смыслу, а не по типу;
+#  - unused-argument: сигнатуры обработчиков состояний BodyAI унифицированы
+#    (все принимают delta), даже если конкретное состояние его не использует.
+disable:
+  - class-definitions-order
+  - unused-argument

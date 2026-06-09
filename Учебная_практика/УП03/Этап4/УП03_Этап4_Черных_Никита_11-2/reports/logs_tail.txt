@@ -1,0 +1,5 @@
+[INFO] throw#1 hit=head combo=1
+[INFO] throw#2 hit=torso combo=2
+[INFO] finisher triggered
+[INFO] round reset, score persisted
+[WARN] audio bus peaked -1.2dB

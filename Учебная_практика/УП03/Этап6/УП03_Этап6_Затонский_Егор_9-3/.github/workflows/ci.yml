@@ -1,0 +1,17 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  godot-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Godot 4.6.1 (без Docker)
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.6.1
+      - name: gdlint
+        run: |
+          python -m pip install gdtoolkit==4.5.0
+          gdlint scripts
+      - name: Headless smoke-test
+        run: godot --headless --path . --quit-after 120 res://scenes/main.tscn

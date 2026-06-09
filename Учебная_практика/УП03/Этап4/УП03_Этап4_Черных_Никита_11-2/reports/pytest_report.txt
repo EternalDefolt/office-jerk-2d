@@ -1,0 +1,5 @@
+== asset_gen self-test ==
+test_success_request ... ok
+test_empty_prompt_400 ... ok
+test_timeout_fallback ... ok
+3 passed in 0.41s
