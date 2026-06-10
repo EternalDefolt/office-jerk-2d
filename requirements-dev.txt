@@ -1,0 +1,3 @@
+# Инструменты качества кода для GDScript (этап инсталляции УП.03).
+# Установка:  python -m pip install --user -r requirements-dev.txt
+gdtoolkit==4.*

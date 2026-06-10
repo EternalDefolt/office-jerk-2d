@@ -18,6 +18,17 @@ tools/
 .mcp.json
 scripts/.gemini_session/
 
+# Secrets & env
+.env
+
+# Build output (экспортные сборки)
+build/
+export/
+
+# Temp practice artifacts
+docs/_practice_unzipped/
+docs/_build_pres.js
+
 # OS
 .DS_Store
 Thumbs.db

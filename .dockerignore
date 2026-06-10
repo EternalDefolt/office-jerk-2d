@@ -1,0 +1,35 @@
+# Git и история
+.git
+.gitignore
+.gitattributes
+
+# Кэш импорта Godot (контейнер импортирует заново)
+.godot/
+
+# Dev-инструментарий и временные данные
+dev_screenshots/
+tools/
+docs/
+screenshots/
+build/
+
+# AI / редакторские артефакты
+.claude/
+.claude-flow/
+.swarm/
+.chrome_profile/
+.gemini_session/
+.mcp.json
+CLAUDE.md
+
+# Тесты не нужны в рантайм-образе
+addons/gdUnit4/
+tests/
+
+# Секреты и мусор
+.env
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

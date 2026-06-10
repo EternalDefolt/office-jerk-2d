@@ -1,0 +1,10 @@
+# Office Jerk 2D — единый запуск через Docker Compose.
+# Проект десктопный и состоит из одной части (постоянного backend/БД нет),
+# поэтому сервис один: он собирает образ и прогоняет headless smoke-test
+# главной сцены. Compose добавлен для единообразия команд этапа.
+services:
+  game:
+    build: .
+    image: office-jerk-2d:latest
+    container_name: office-jerk-2d
+    command: ["godot", "--headless", "--path", ".", "--quit-after", "180", "res://scenes/main.tscn"]
