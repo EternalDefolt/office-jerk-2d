@@ -13,4 +13,6 @@ func _draw() -> void:
 			var c := C1 if (x + y) % 2 == 0 else C2
 			draw_rect(Rect2(x * TILE, y * TILE, TILE, TILE), c)
 	# Surface edge
-	draw_line(Vector2(-COLS / 2 * TILE, 0), Vector2(COLS / 2 * TILE, 0), Color(0.35, 0.35, 0.38), 1.5)
+	draw_line(
+		Vector2(-COLS / 2 * TILE, 0), Vector2(COLS / 2 * TILE, 0), Color(0.35, 0.35, 0.38), 1.5
+	)

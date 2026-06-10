@@ -25,6 +25,7 @@ var _d_offset := Vector2.ZERO
 var _d_start := Vector2.ZERO
 var _p_start_x := 0.0
 var _p_target_x := 0.0
+@warning_ignore("unused_private_class_variable")
 var _neck_local := Vector2.ZERO
 
 # Hitstop
@@ -71,30 +72,39 @@ func _physics_process(delta: float) -> void:
 
 	_t += delta
 	match _phase:
-		Phase.ANTICIPATION: _do_anticipation(delta)
-		Phase.LUNGE: _do_lunge(delta)
-		Phase.GRAB: _do_grab(delta)
-		Phase.WINDUP: _do_windup(delta)
-		Phase.RELEASE: _do_release(delta)
+		Phase.ANTICIPATION:
+			_do_anticipation(delta)
+		Phase.LUNGE:
+			_do_lunge(delta)
+		Phase.GRAB:
+			_do_grab(delta)
+		Phase.WINDUP:
+			_do_windup(delta)
+		Phase.RELEASE:
+			_do_release(delta)
 
 	_upd_fx(delta)
 	queue_redraw()
 
 
 func _start() -> void:
-	_player.finisher_active = true
-	_dummy.finisher_active = true
-	_dir = signf(_dummy.global_position.x - _player.global_position.x)
-	_grab_hand = 1 if _dir > 0 else 0
-	_d_start = _dummy.global_position
-	_p_start_x = _player.global_position.x  # BUG FIX: remember where player started
-	_p_target_x = _player.global_position.x  # BUG FIX: set recovery target to current pos
-	_player._vdir = _dir
-	_player._dir = _dir
-	if _camera:
-		_cam_zoom = _camera.zoom
-	_phase = Phase.ANTICIPATION
-	_t = 0.0
+	# Этап 9: страж от null-ссылок. Если Player/Dummy выгружены или ещё
+	# не присоединились к дереву — финишер запускать нельзя, иначе
+	# все последующие _player._t_rot/_dummy._fin_override уронят сцену.
+	if is_instance_valid(_dummy) and is_instance_valid(_player):
+		_player.finisher_active = true
+		_dummy.finisher_active = true
+		_dir = signf(_dummy.global_position.x - _player.global_position.x)
+		_grab_hand = 1 if _dir > 0 else 0
+		_d_start = _dummy.global_position
+		_p_start_x = _player.global_position.x
+		_p_target_x = _player.global_position.x
+		_player._vdir = _dir
+		_player._dir = _dir
+		if _camera:
+			_cam_zoom = _camera.zoom
+		_phase = Phase.ANTICIPATION
+		_t = 0.0
 
 
 # ═══════════════════════════
@@ -152,7 +162,10 @@ func _do_lunge(delta: float) -> void:
 	_recomp()
 
 	# Grab hand reaches toward dummy neck
-	var neck_world := _dummy.global_position + Vector2(0, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
+	var neck_world := (
+		_dummy.global_position
+		+ Vector2(0, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
+	)
 	var hand_local = neck_world - _player.global_position
 	if _grab_hand == 1:
 		_player._rh_pos = _player._rh_pos.lerp(hand_local, delta * 12.0)
@@ -187,7 +200,13 @@ func _do_grab(delta: float) -> void:
 	# Hand locked to neck — SHAKES from weight of holding dummy up
 	var strain := sin(_t * 7.0) * 3.0 * alive + randf_range(-1.5, 1.5) * alive
 	# Neck position higher — don't let head go under body
-	var neck = _d_offset + Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3 + sin(_t * 4.0) * 2.0)
+	var neck = (
+		_d_offset
+		+ Vector2(
+			strain,
+			-GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3 + sin(_t * 4.0) * 2.0
+		)
+	)
 	if _grab_hand == 1:
 		_player._rh_pos = neck
 		_player._rh_rot = atan2(0.5 + sin(_t * 5.0) * 0.1, _dir)
@@ -270,7 +289,10 @@ func _do_windup(delta: float) -> void:
 
 	# Hand on neck (same height as grab phase)
 	var strain := sin(_t * 12.0) * 1.5
-	var neck = _d_offset + Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
+	var neck = (
+		_d_offset
+		+ Vector2(strain, -GND + SZ_FOOT.y + GAP_BF + SZ_BODY.y + GAP_HB + SZ_HEAD.y * 0.3)
+	)
 	if _grab_hand == 1:
 		_player._rh_pos = neck
 	else:
@@ -294,7 +316,8 @@ func _do_windup(delta: float) -> void:
 		"squash": [Vector2.ONE, Vector2.ONE],
 		"tremor": 0.3,
 		"off": off2,
-		"hand_rot": [
+		"hand_rot":
+		[
 			atan2(lv2.y, lv2.x) if lv2.length() > 5.0 else PI / 2.0,
 			atan2(rv2.y, rv2.x) if rv2.length() > 5.0 else PI / 2.0,
 		],
@@ -407,7 +430,7 @@ func _recomp() -> void:
 
 func _set_free_hand(delta: float) -> void:
 	var sh_y := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y + SZ_BODY.y * 0.25
-	var idle := Vector2((-8.0 if _grab_hand == 1 else 8.0), sh_y + 50.0)
+	var idle := Vector2(-8.0 if _grab_hand == 1 else 8.0, sh_y + 50.0)
 	if _grab_hand == 1:
 		_player._lh_pos = _player._lh_pos.lerp(idle, delta * 5.0)
 		_player._lh_rot = lerpf(_player._lh_rot, PI / 2.0 * _dir, delta * 5.0)
@@ -418,7 +441,7 @@ func _set_free_hand(delta: float) -> void:
 
 func _return_grab_hand(delta: float) -> void:
 	var sh_y := GND - SZ_FOOT.y - GAP_BF - SZ_BODY.y + SZ_BODY.y * 0.25
-	var idle := Vector2((8.0 if _grab_hand == 1 else -8.0), sh_y + 50.0)
+	var idle := Vector2(8.0 if _grab_hand == 1 else -8.0, sh_y + 50.0)
 	if _grab_hand == 1:
 		_player._rh_pos = _player._rh_pos.lerp(idle, delta * 4.0)
 		_player._rh_rot = lerpf(_player._rh_rot, PI / 2.0 * _dir, delta * 4.0)
@@ -435,44 +458,85 @@ func _stand_pose(shake: float) -> Dictionary:
 		"rot": [shake * 0.01, 0.0],
 		"squash": [Vector2.ONE, Vector2.ONE],
 		"tremor": 0.0,
-		"off": [Vector2(shake, 0), Vector2(shake * 0.5, 0), Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO],
+		"off":
+		[
+			Vector2(shake, 0),
+			Vector2(shake * 0.5, 0),
+			Vector2.ZERO,
+			Vector2.ZERO,
+			Vector2.ZERO,
+			Vector2.ZERO
+		],
 	}
 
 
 func _spawn_impact() -> void:
 	for _i in 10:
-		var bdir := Vector2(randf_range(-1, 1), randf_range(-1.5, -0.3)).normalized() * randf_range(40, 150)
+		var bdir := (
+			Vector2(randf_range(-1, 1), randf_range(-1.5, -0.3)).normalized() * randf_range(40, 150)
+		)
 		_blood.append([_dummy.global_position + Vector2(0, GND), bdir, randf_range(0.3, 0.7)])
 	for _i in 8:
-		var ddir := Vector2(randf_range(-1, 1), randf_range(-1, -0.2)).normalized() * randf_range(20, 80)
-		_dust.append([_dummy.global_position + Vector2(randf_range(-10, 10), GND), ddir, randf_range(0.3, 0.6)])
+		var ddir := (
+			Vector2(randf_range(-1, 1), randf_range(-1, -0.2)).normalized() * randf_range(20, 80)
+		)
+		_dust.append(
+			[
+				_dummy.global_position + Vector2(randf_range(-10, 10), GND),
+				ddir,
+				randf_range(0.3, 0.6)
+			]
+		)
 
 
 func _upd_fx(delta: float) -> void:
 	var i := 0
 	while i < _blood.size():
 		var b: Array = _blood[i]
-		var p: Vector2 = b[0]; var v: Vector2 = b[1]; var l: float = b[2]
-		v.y += 400.0 * delta; p += v * delta; l -= delta
-		if l <= 0: _blood.remove_at(i)
-		else: _blood[i] = [p, v, l]; i += 1
+		var p: Vector2 = b[0]
+		var v: Vector2 = b[1]
+		var l: float = b[2]
+		v.y += 400.0 * delta
+		p += v * delta
+		l -= delta
+		if l <= 0:
+			_blood.remove_at(i)
+		else:
+			_blood[i] = [p, v, l]
+			i += 1
 	i = 0
 	while i < _dust.size():
 		var d: Array = _dust[i]
-		var p: Vector2 = d[0]; var v: Vector2 = d[1]; var l: float = d[2]
-		v.y += 100.0 * delta; v *= 0.95; p += v * delta; l -= delta
-		if l <= 0: _dust.remove_at(i)
-		else: _dust[i] = [p, v, l]; i += 1
+		var p: Vector2 = d[0]
+		var v: Vector2 = d[1]
+		var l: float = d[2]
+		v.y += 100.0 * delta
+		v *= 0.95
+		p += v * delta
+		l -= delta
+		if l <= 0:
+			_dust.remove_at(i)
+		else:
+			_dust[i] = [p, v, l]
+			i += 1
 
 
 func _draw() -> void:
-	if _player == null: return
+	if _player == null:
+		return
 	var off := -_player.global_position
 	for b in _blood:
-		var p: Vector2 = b[0]; var l: float = b[2]
+		var p: Vector2 = b[0]
+		var l: float = b[2]
 		var sz := lerpf(2.0, 4.0, l)
-		draw_rect(Rect2(p.x + off.x - sz / 2, p.y + off.y - sz / 2, sz, sz), Color(0.5, 0.02, 0.02, l))
+		draw_rect(
+			Rect2(p.x + off.x - sz / 2, p.y + off.y - sz / 2, sz, sz), Color(0.5, 0.02, 0.02, l)
+		)
 	for d in _dust:
-		var p: Vector2 = d[0]; var l: float = d[2]
+		var p: Vector2 = d[0]
+		var l: float = d[2]
 		var sz := lerpf(1.0, 3.0, l)
-		draw_rect(Rect2(p.x + off.x - sz / 2, p.y + off.y - sz / 2, sz, sz), Color(0.4, 0.35, 0.3, l * 0.5))
+		draw_rect(
+			Rect2(p.x + off.x - sz / 2, p.y + off.y - sz / 2, sz, sz),
+			Color(0.4, 0.35, 0.3, l * 0.5)
+		)

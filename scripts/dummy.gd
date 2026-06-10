@@ -3,9 +3,9 @@ extends StaticBody2D
 
 const OL := Color(0.05, 0.05, 0.05)
 const FL := Color(1.0, 1.0, 1.0)
-const SUIT := Color(0.55, 0.58, 0.62)   # серый деловой костюм
-const TIE := Color(0.18, 0.15, 0.28)    # тёмный галстук
-const BOOT := Color(0.08, 0.08, 0.1)    # чёрные ботинки
+const SUIT := Color(0.55, 0.58, 0.62)  # серый деловой костюм
+const TIE := Color(0.18, 0.15, 0.28)  # тёмный галстук
+const BOOT := Color(0.08, 0.08, 0.1)  # чёрные ботинки
 const SHIRT := Color(0.92, 0.92, 0.95)  # полоска воротничка
 const SW := 3.0
 const SZ_HEAD := Vector2(68, 64)
@@ -41,6 +41,18 @@ var _stains: Array = []
 
 var finisher_active := false
 var is_downed := false
+# Locomotion (set by EnemyAI): velocity drives the gait, accel drives the lean
+var walk_vel := 0.0
+var walk_accel := 0.0
+var _gait_t := 0.0
+var _gait_w := 0.0  # smoothed walk weight 0..1 (like Player._wblend)
+var _lean := 0.0  # accel lean, spring-damped (like Player._lean)
+var _lean_v := 0.0
+# Gait rotations applied in _draw (like Player's _lh_rot/_rh_rot/_t_rot/_h_rot)
+var _gait_hrot := [PI / 2.0, PI / 2.0]  # hand sprite rotation
+var _gait_frot := [0.0, 0.0]  # foot tilt during swing
+var _gait_brot := 0.0  # extra body rotation
+var _gait_head_rot := 0.0  # extra head rotation
 var _fin_override := {}
 var _player: Node2D = null
 var _ai = preload("res://scripts/body_ai.gd").new()
@@ -137,11 +149,88 @@ func _sim_standing(delta: float) -> void:
 	# Use BodyAI for standing behavior (includes schizo twitches)
 	_ai.update(delta)
 	var ai_pos = _ai.get_positions()
+	_apply_gait(ai_pos, delta)
 	# Spring toward AI-computed positions
 	for i in 6:
 		var target: Vector2 = ai_pos[i]
 		_vel[i] += (100.0 * (target - _pos[i]) - 10.0 * _vel[i]) * delta
 		_pos[i] += _vel[i] * delta
+
+
+func _apply_gait(targets: Array, delta: float) -> void:
+	# Procedural walk cycle layered on top of BodyAI targets — mirrors the
+	# Player's animation scheme: walk blend, speed-scaled cadence, footfall
+	# hip-drop, and spring-damped lean driven by ACCELERATION (not velocity).
+	var spd := absf(walk_vel)
+	var spd_r := clampf(spd / 90.0, 0.0, 1.3)  # like Player._spd_r
+
+	# Walk blend in/out (like Player._wblend)
+	if spd > 8.0:
+		_gait_w = minf(_gait_w + 5.0 * delta, 1.0)
+	else:
+		_gait_w = maxf(_gait_w - 7.0 * delta, 0.0)
+
+	# Accel lean: spring-damped pursuit, same shape as Player._upd_lean.
+	# Leans INTO acceleration, counter-leans when braking — pure physics feel.
+	var lean_tgt := clampf(walk_accel / 900.0, -1.0, 1.0) * 14.0
+	_lean_v += (60.0 * (lean_tgt - _lean) - 9.0 * _lean_v) * delta
+	_lean += _lean_v * delta
+	_lean = clampf(_lean, -16.0, 16.0)
+
+	# Lean applies even when standing (e.g. hard stop overshoot)
+	targets[0] += Vector2(_lean * 1.4, 0)  # head leads the lean
+	targets[1] += Vector2(_lean, 0)
+	_gait_brot = _lean * 0.010
+	_gait_head_rot = _lean * 0.014
+
+	if _gait_w < 0.02:
+		_gait_hrot[0] = lerpf(_gait_hrot[0], PI / 2.0, delta * 8.0)
+		_gait_hrot[1] = lerpf(_gait_hrot[1], PI / 2.0, delta * 8.0)
+		_gait_frot[0] = lerpf(_gait_frot[0], 0.0, delta * 8.0)
+		_gait_frot[1] = lerpf(_gait_frot[1], 0.0, delta * 8.0)
+		return
+	var dir := signf(walk_vel) if walk_vel != 0.0 else 1.0
+	var w := _gait_w * maxf(spd_r, 0.35)
+	var step_len := 20.0 * _gait_w
+	var lift := 12.0 * w
+
+	# Cadence locked to speed so planted feet DON'T slide on the floor:
+	# foot world-speed ≈ step_len*ω must match walk speed.
+	var cadence := clampf(spd / maxf(step_len, 6.0), 3.0, 11.0)
+	_gait_t += delta * cadence
+	var ph := _gait_t
+
+	# Feet: opposite phases; lift only on the swing half + foot tilt mid-swing
+	# (toe-down reach, like the Player's step angle)
+	var s4 := sin(ph)
+	var s5 := sin(ph + PI)
+	targets[4] += Vector2(s4 * step_len * dir, -maxf(s4 * lift, 0.0))
+	targets[5] += Vector2(s5 * step_len * dir, -maxf(s5 * lift, 0.0))
+	_gait_frot[0] = cos(ph) * 0.35 * dir * w * maxf(s4, 0.0)
+	_gait_frot[1] = cos(ph + PI) * 0.35 * dir * w * maxf(s5, 0.0)
+
+	# Arms: shaped counter-swing like Player (pow easing — snappy forward,
+	# lazy back) + hand sprite ROTATION around PI/2, exactly his formula
+	var l_raw := sin(ph + PI + 0.15)
+	var r_raw := sin(ph)
+	var l_shaped := signf(l_raw) * pow(maxf(absf(l_raw), 0.001), 0.6)
+	var r_shaped := signf(r_raw) * pow(maxf(absf(r_raw), 0.001), 0.85)
+	var arm := 14.0 * w
+	var dip := 4.0 * w
+	targets[2] += Vector2(l_shaped * arm * dir + dir * 3.0 * w, (1.0 - absf(l_raw)) * dip * 1.1)
+	targets[3] += Vector2(r_shaped * arm * dir + dir * 3.0 * w, (1.0 - absf(r_raw)) * dip * 0.9)
+	var rot_range := PI / 5.0
+	_gait_hrot[0] = PI / 2.0 - l_shaped * _gait_w * rot_range * dir
+	_gait_hrot[1] = PI / 2.0 - r_shaped * _gait_w * rot_range * dir
+
+	# Torso: footfall hip-drop + walk rotation sway (Player's wbob + whip)
+	var footfall := absf(sin(ph))
+	var hip_drop := footfall * 4.0 * w
+	targets[1] += Vector2(dir * 3.0 * w, -hip_drop)
+	_gait_brot += sin(ph) * 0.035 * w * dir
+	# Head: softer bob, slight horizontal sway + counter-tilt (his wb_x/wb_y)
+	targets[0] += Vector2(sin(ph) * 2.0 * w, -hip_drop * 0.6 + sin(ph * 2.0) * 1.5 * w)
+	_gait_head_rot += sin(ph) * 0.02 * w * dir
 
 
 func _sim_ragdoll(delta: float) -> void:
@@ -169,7 +258,8 @@ func _sim_ragdoll(delta: float) -> void:
 		for i in 6:
 			if _pos[i].y > GND:
 				_pos[i].y = GND
-				if _vel[i].y > 0: _vel[i].y *= -0.15
+				if _vel[i].y > 0:
+					_vel[i].y *= -0.15
 
 
 func go_ragdoll(impulse: Vector2 = Vector2.ZERO, gravity: float = 1800.0) -> void:
@@ -192,13 +282,14 @@ func reset_standing() -> void:
 
 
 func _check_hit(hand_idx: int) -> void:
-	if _player == null: return
+	if _player == null:
+		return
 	if not _player._ph_on[hand_idx]:
 		_hit_in[hand_idx] = false
 		return
 	# Only check during STRIKE phase (not windup)
 	var pt: float = _player._ph_t[hand_idx]
-	var wf = _player.PUNCH_WINDUP / (_player.PUNCH_WINDUP + _player.PUNCH_STRIKE)
+	var wf = PlayerCombat.PUNCH_WINDUP / (PlayerCombat.PUNCH_WINDUP + PlayerCombat.PUNCH_STRIKE)
 	if pt < wf:
 		_hit_in[hand_idx] = false  # RESET for each new punch windup
 		return
@@ -208,8 +299,10 @@ func _check_hit(hand_idx: int) -> void:
 	var in_head := local.distance_to(_pos[0]) < 50
 	var in_body := local.distance_to(_pos[1]) < 55
 	var hit := -1
-	if in_head: hit = 0
-	elif in_body: hit = 1
+	if in_head:
+		hit = 0
+	elif in_body:
+		hit = 1
 	if hit >= 0 and not _hit_in[hand_idx]:
 		_hit_in[hand_idx] = true
 		var pd: Vector2 = _player._ph_dir[hand_idx]
@@ -259,31 +352,41 @@ func _upd_blood(delta: float) -> void:
 	var i := 0
 	while i < _blood.size():
 		var b: Array = _blood[i]
-		var p: Vector2 = b[0]; var v: Vector2 = b[1]; var l: float = b[2]
-		v.y += 400.0 * delta; p += v * delta; l -= delta
+		var p: Vector2 = b[0]
+		var v: Vector2 = b[1]
+		var l: float = b[2]
+		v.y += 400.0 * delta
+		p += v * delta
+		l -= delta
 		if l <= 0.0 or p.y > GND:
 			if p.y > GND and _stains.size() < 200:
 				_stains.append([p, randf_range(2, 5)])
-			_blood.remove_at(i); continue
-		_blood[i] = [p, v, l]; i += 1
+			_blood.remove_at(i)
+			continue
+		_blood[i] = [p, v, l]
+		i += 1
 
 
 func _draw() -> void:
 	if finisher_active and not _fin_override.is_empty():
-		_draw_override(); return
+		_draw_override()
+		return
 	var flash_col := Color(1.0, 0.35, 0.25)
 	var body_fill := flash_col if _flash > 0.0 else SUIT
 	var foot_fill := flash_col if _flash > 0.0 else BOOT
 
-	var hr := clampf(_vel[0].x * 0.003, -0.3, 0.3)
-	var br := clampf(_vel[1].x * 0.002, -0.2, 0.2)
-	_draw_hand(_pos[2], true)
+	var hr := clampf(_vel[0].x * 0.003, -0.3, 0.3) + _gait_head_rot
+	var br := clampf(_vel[1].x * 0.002, -0.2, 0.2) + _gait_brot
+	_draw_hand_r(_pos[2], true, _gait_hrot[0])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	_draw_box(_pos[4], SZ_FOOT, foot_fill)
-	_draw_box(_pos[5], SZ_FOOT, foot_fill)
+	_draw_foot(_pos[4], _gait_frot[0], foot_fill)
+	_draw_foot(_pos[5], _gait_frot[1], foot_fill)
 	draw_set_transform(_pos[1], br, Vector2.ONE)
 	# Корпус (пиджак)
-	draw_rect(Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW), OL)
+	draw_rect(
+		Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW),
+		OL
+	)
 	draw_rect(Rect2(-SZ_BODY.x / 2.0, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x, SZ_BODY.y - 4), body_fill)
 	# Белая полоска воротничка у шеи
 	if _flash <= 0.0:
@@ -294,25 +397,35 @@ func _draw() -> void:
 		var tie_bot := SZ_BODY.y / 2.0 - 6
 		draw_rect(Rect2(-tie_w / 2.0, tie_top, tie_w, tie_bot - tie_top), TIE)
 		# Треугольный «узел» галстука сверху
-		var knot := PackedVector2Array([
-			Vector2(-tie_w / 2.0 - 2, tie_top),
-			Vector2(tie_w / 2.0 + 2, tie_top),
-			Vector2(0, tie_top + 6),
-		])
+		var knot := PackedVector2Array(
+			[
+				Vector2(-tie_w / 2.0 - 2, tie_top),
+				Vector2(tie_w / 2.0 + 2, tie_top),
+				Vector2(0, tie_top + 6),
+			]
+		)
 		draw_polygon(knot, PackedColorArray([TIE]))
 	draw_set_transform(_pos[0], hr, Vector2.ONE)
 	if _thead:
-		draw_texture_rect(_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false)
+		draw_texture_rect(
+			_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false
+		)
 	else:
-		draw_rect(Rect2(-SZ_HEAD.x / 2.0 - SW, -SZ_HEAD.y / 2.0 - SW, SZ_HEAD.x + SW * 2, SZ_HEAD.y + SW * 2), OL)
+		draw_rect(
+			Rect2(
+				-SZ_HEAD.x / 2.0 - SW, -SZ_HEAD.y / 2.0 - SW, SZ_HEAD.x + SW * 2, SZ_HEAD.y + SW * 2
+			),
+			OL
+		)
 		draw_rect(Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), body_fill)
 	_draw_eyes()
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	_draw_hand(_pos[3], false)
+	_draw_hand_r(_pos[3], false, _gait_hrot[1])
 	if _hit_count > 0:
 		var cp := _pos[0] + Vector2(0, -SZ_HEAD.y / 2.0 - 16)
 		draw_set_transform(cp, 0.0, Vector2.ONE)
-		var font := ThemeDB.fallback_font; var txt := str(_hit_count)
+		var font := ThemeDB.fallback_font
+		var txt := str(_hit_count)
 		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_CENTER, -1, 14).x
 		draw_rect(Rect2(-tw / 2.0 - 4, -9, tw + 8, 16), Color(0, 0, 0, 0.7))
 		draw_string(font, Vector2(-tw / 2.0, 3), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, FL)
@@ -324,7 +437,9 @@ func _draw_override() -> void:
 	var hc: Vector2 = _fin_override.get("head_ctr", _pos[0])
 	var bc: Vector2 = _fin_override.get("body_ctr", _pos[1])
 	var ra = _fin_override.get("rot", [0.0, 0.0])
-	var off_arr = _fin_override.get("off", [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+	var off_arr = _fin_override.get(
+		"off", [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+	)
 
 	# Compute part positions from offsets
 	var bt := GND - SZ_FOOT.y - 36.0 - SZ_BODY.y
@@ -348,12 +463,17 @@ func _draw_override() -> void:
 	_draw_box(rf_p, SZ_FOOT, fill)
 	# Body
 	draw_set_transform(bc, float(ra[1]), Vector2.ONE)
-	draw_rect(Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW), OL)
+	draw_rect(
+		Rect2(-SZ_BODY.x / 2.0 - SW, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x + SW * 2, SZ_BODY.y - 4 + SW),
+		OL
+	)
 	draw_rect(Rect2(-SZ_BODY.x / 2.0, -SZ_BODY.y / 2.0 + 4, SZ_BODY.x, SZ_BODY.y - 4), fill)
 	# Head
 	draw_set_transform(hc, float(ra[0]), Vector2.ONE)
 	if _thead:
-		draw_texture_rect(_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false)
+		draw_texture_rect(
+			_thead, Rect2(-SZ_HEAD.x / 2.0, -SZ_HEAD.y / 2.0, SZ_HEAD.x, SZ_HEAD.y), false
+		)
 	_draw_eyes()
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# Front hand
@@ -395,8 +515,10 @@ func _draw_eyes() -> void:
 func _draw_wounds(part: int, sz: Vector2) -> void:
 	var half := sz / 2.0
 	for w in _wounds:
-		if int(w[0]) != part: continue
-		var off: Vector2 = w[1]; var dir: Vector2 = w[2]
+		if int(w[0]) != part:
+			continue
+		var off: Vector2 = w[1]
+		var dir: Vector2 = w[2]
 		off.x = clampf(off.x, -half.x + 5, half.x - 5)
 		off.y = clampf(off.y, -half.y + 5, half.y - 5)
 		var perp := Vector2(-dir.y, dir.x)
@@ -411,7 +533,12 @@ func _draw_hand_r(pos: Vector2, is_left: bool, rot: float) -> void:
 		draw_texture_rect(tex, Rect2(-HAND_SZ / 2.0, HAND_SZ), false)
 	else:
 		draw_set_transform(pos, rot, Vector2.ONE)
-		draw_rect(Rect2(-HAND_SZ.x / 2.0 - SW, -HAND_SZ.y / 2.0 - SW, HAND_SZ.x + SW * 2, HAND_SZ.y + SW * 2), OL)
+		draw_rect(
+			Rect2(
+				-HAND_SZ.x / 2.0 - SW, -HAND_SZ.y / 2.0 - SW, HAND_SZ.x + SW * 2, HAND_SZ.y + SW * 2
+			),
+			OL
+		)
 		draw_rect(Rect2(-HAND_SZ.x / 2.0, -HAND_SZ.y / 2.0, HAND_SZ.x, HAND_SZ.y), FL)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -423,11 +550,29 @@ func _draw_hand(pos: Vector2, is_left: bool) -> void:
 		draw_texture_rect(tex, Rect2(-HAND_SZ / 2.0, HAND_SZ), false)
 	else:
 		draw_set_transform(pos, 0.0, Vector2.ONE)
-		draw_rect(Rect2(-HAND_SZ.x / 2.0 - SW, -HAND_SZ.y / 2.0 - SW, HAND_SZ.x + SW * 2, HAND_SZ.y + SW * 2), OL)
+		draw_rect(
+			Rect2(
+				-HAND_SZ.x / 2.0 - SW, -HAND_SZ.y / 2.0 - SW, HAND_SZ.x + SW * 2, HAND_SZ.y + SW * 2
+			),
+			OL
+		)
 		draw_rect(Rect2(-HAND_SZ.x / 2.0, -HAND_SZ.y / 2.0, HAND_SZ.x, HAND_SZ.y), FL)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
+func _draw_foot(ctr: Vector2, rot: float, fill: Color) -> void:
+	# Rotated around the heel-ish center, like the Player's stepping feet
+	draw_set_transform(ctr, rot, Vector2.ONE)
+	draw_rect(
+		Rect2(-SZ_FOOT.x / 2.0 - SW, -SZ_FOOT.y / 2.0 - SW, SZ_FOOT.x + SW * 2, SZ_FOOT.y + SW * 2),
+		OL
+	)
+	draw_rect(Rect2(-SZ_FOOT.x / 2.0, -SZ_FOOT.y / 2.0, SZ_FOOT.x, SZ_FOOT.y), fill)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
 func _draw_box(ctr: Vector2, sz: Vector2, fill: Color) -> void:
-	draw_rect(Rect2(ctr.x - sz.x / 2.0 - SW, ctr.y - sz.y / 2.0 - SW, sz.x + SW * 2, sz.y + SW * 2), OL)
+	draw_rect(
+		Rect2(ctr.x - sz.x / 2.0 - SW, ctr.y - sz.y / 2.0 - SW, sz.x + SW * 2, sz.y + SW * 2), OL
+	)
 	draw_rect(Rect2(ctr.x - sz.x / 2.0, ctr.y - sz.y / 2.0, sz.x, sz.y), fill)

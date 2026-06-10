@@ -6,18 +6,19 @@ extends Node
 
 const SCREENSHOT_DIR := "res://dev_screenshots/"
 const SCREENSHOT_INTERVAL := 3.0  # секунды между авто-скриншотами
-const MAX_SCREENSHOTS := 20       # макс файлов (кольцевой буфер)
+const MAX_SCREENSHOTS := 20  # макс файлов (кольцевой буфер)
 
 var _timer := 0.0
 var _shot_index := 0
-var _enabled := false  # AUTO DISABLED — F9 = manual, F10 = re-enable auto
+var _enabled := false  # дисебля отключалочка
 var _scene_info := {}
 
 
 func _ready() -> void:
 	# Создаём папку
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SCREENSHOT_DIR))
-	print("[DEV_EYE] Auto OFF. F9 = manual screenshot, F10 = toggle auto")
+	if OS.is_debug_build():
+		print("[DEV_EYE] Auto OFF. F9 = manual screenshot, F10 = toggle auto")
 
 
 func _process(delta: float) -> void:
@@ -28,7 +29,8 @@ func _process(delta: float) -> void:
 
 	if Input.is_physical_key_pressed(KEY_F10) and not _was_f10:
 		_enabled = not _enabled
-		print("[DEV_EYE] Auto: %s" % ("ON" if _enabled else "OFF"))
+		if OS.is_debug_build():
+			print("[DEV_EYE] Auto: %s" % ("ON" if _enabled else "OFF"))
 	_was_f10 = Input.is_physical_key_pressed(KEY_F10)
 
 	if not _enabled:
@@ -76,7 +78,8 @@ func _take_screenshot(tag: String) -> void:
 		f.close()
 
 	_shot_index += 1
-	print("[DEV_EYE] Saved: %s" % filename)
+	if OS.is_debug_build():
+		print("[DEV_EYE] Saved: %s" % filename)
 
 
 func _gather_scene_info() -> void:

@@ -3,18 +3,19 @@ class_name BodyAI
 ## Each limb has its own "desire" system that smoothly pursues targets
 ## No teleporting, no hardcoded animations — just goals and physics
 
+
 # ═══════════════════════════════════════
 #  LIMB: one body part with desire-driven motion
 # ═══════════════════════════════════════
 class Limb:
-	var pos := Vector2.ZERO       # current position (local to body)
-	var vel := Vector2.ZERO       # velocity
-	var target := Vector2.ZERO    # where it WANTS to be
-	var rest := Vector2.ZERO      # default resting position
-	var stiffness := 80.0         # how fast it chases target
-	var damping := 9.0            # how much it overshoots
-	var weight := 1.0             # mass (heavier = slower response)
-	var max_speed := 400.0        # cap on velocity
+	var pos := Vector2.ZERO  # current position (local to body)
+	var vel := Vector2.ZERO  # velocity
+	var target := Vector2.ZERO  # where it WANTS to be
+	var rest := Vector2.ZERO  # default resting position
+	var stiffness := 80.0  # how fast it chases target
+	var damping := 9.0  # how much it overshoots
+	var weight := 1.0  # mass (heavier = slower response)
+	var max_speed := 400.0  # cap on velocity
 
 	func update(delta: float) -> void:
 		# Spring-damper toward target
@@ -38,34 +39,34 @@ class Limb:
 #  BEHAVIOR: what the body is trying to do
 # ═══════════════════════════════════════
 enum Intent {
-	IDLE,           # standing, breathing
-	FLINCH,         # just got hit — recoil
-	STAGGER,        # heavy hit — stumble
-	GRABBED,        # being held — struggle to escape
-	CHOKING,        # being choked — panic, grab at throat
-	THROWN,          # ragdoll in air
-	DOWNED,         # on the ground
-	GETTING_UP,     # recovering to stand
+	IDLE,  # standing, breathing
+	FLINCH,  # just got hit — recoil
+	STAGGER,  # heavy hit — stumble
+	GRABBED,  # being held — struggle to escape
+	CHOKING,  # being choked — panic, grab at throat
+	THROWN,  # ragdoll in air
+	DOWNED,  # on the ground
+	GETTING_UP,  # recovering to stand
 }
 
 var intent := Intent.IDLE
-var intent_time := 0.0          # how long in current intent
-var pain := 0.0                 # 0=fresh, 1=nearly dead (affects energy)
-var panic := 0.0                # 0=calm, 1=max panic
-var energy := 1.0               # 1=full strength, 0=exhausted
+var intent_time := 0.0  # how long in current intent
+var pain := 0.0  # 0=fresh, 1=nearly dead (affects energy)
+var panic := 0.0  # 0=calm, 1=max panic
+var energy := 1.0  # 1=full strength, 0=exhausted
 
 # The 6 limbs: head, body, lhand, rhand, lfoot, rfoot
 var limbs: Array[Limb] = []
 
 # External inputs
-var hit_dir := Vector2.ZERO     # last hit direction
+var hit_dir := Vector2.ZERO  # last hit direction
 var grab_point := Vector2.ZERO  # where the grabber's hand is (local to body)
-var facing_dir := 1.0           # which way attacker is (-1 or 1)
+var facing_dir := 1.0  # which way attacker is (-1 or 1)
 
 # Action state machine
 var _action_timer := 0.0
-var _action_type := 0           # current sub-action within intent
-var _action_dur := 0.3          # how long current action lasts
+var _action_type := 0  # current sub-action within intent
+var _action_dur := 0.3  # how long current action lasts
 var _breath_t := 0.0
 var _rng := RandomNumberGenerator.new()
 
@@ -168,6 +169,7 @@ func receive_hit(direction: Vector2, force: float) -> void:
 #  INTENT BEHAVIORS
 # ═══════════════════════════════════════
 
+
 func _do_idle(delta: float) -> void:
 	var breath := sin(_breath_t * 2.8)
 	for i in 6:
@@ -196,8 +198,12 @@ func _do_stagger(delta: float) -> void:
 		limbs[0].set_target_smooth(limbs[0].rest + stag * 1.3, 0.2)
 		limbs[1].set_target_smooth(limbs[1].rest + stag, 0.2)
 		# Arms flail in hit direction
-		limbs[2].set_target_smooth(limbs[2].rest + stag + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 5)), 0.15)
-		limbs[3].set_target_smooth(limbs[3].rest + stag + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 5)), 0.15)
+		limbs[2].set_target_smooth(
+			limbs[2].rest + stag + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 5)), 0.15
+		)
+		limbs[3].set_target_smooth(
+			limbs[3].rest + stag + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 5)), 0.15
+		)
 		# Feet stumble
 		limbs[4].set_target_smooth(limbs[4].rest + hit_dir * 10.0, 0.1)
 		limbs[5].set_target_smooth(limbs[5].rest - hit_dir * 5.0, 0.1)
@@ -218,15 +224,21 @@ func _do_grabbed(delta: float) -> void:
 			limbs[1].set_target_smooth(limbs[1].rest + Vector2(away, 0), urg)
 			limbs[0].set_target_smooth(limbs[0].rest + Vector2(away * 0.8, -3.0), urg)
 			# Hands push at grabber
-			limbs[2].set_target_smooth(Vector2(facing_dir * 20.0, limbs[2].rest.y - 15.0), urg * 1.5)
-			limbs[3].set_target_smooth(Vector2(facing_dir * 15.0, limbs[3].rest.y - 10.0), urg * 1.5)
+			limbs[2].set_target_smooth(
+				Vector2(facing_dir * 20.0, limbs[2].rest.y - 15.0), urg * 1.5
+			)
+			limbs[3].set_target_smooth(
+				Vector2(facing_dir * 15.0, limbs[3].rest.y - 10.0), urg * 1.5
+			)
 		1:  # Twist body sideways
 			limbs[1].set_target_smooth(limbs[1].rest + Vector2(8.0, 3.0) * energy, urg)
 			limbs[0].set_target_smooth(limbs[0].rest + Vector2(-5.0, -2.0) * energy, urg)
 			limbs[2].set_target_smooth(limbs[2].rest + Vector2(-15.0, -8.0) * energy, urg)
 			limbs[3].set_target_smooth(limbs[3].rest + Vector2(10.0, 5.0) * energy, urg)
 		2:  # Kick at grabber
-			limbs[4].set_target_smooth(Vector2(facing_dir * 18.0, limbs[4].rest.y - 10.0 * energy), urg * 2.0)
+			limbs[4].set_target_smooth(
+				Vector2(facing_dir * 18.0, limbs[4].rest.y - 10.0 * energy), urg * 2.0
+			)
 			limbs[5].set_target_smooth(limbs[5].rest + Vector2(0, 3.0), urg * 0.5)
 			# Upper body braces
 			limbs[1].set_target_smooth(limbs[1].rest + Vector2(-facing_dir * 5.0, 2.0), urg)
@@ -244,40 +256,77 @@ func _do_choking(delta: float) -> void:
 	# 8 DIFFERENT ACTIONS — AI cycles through them randomly
 	match _action_type:
 		0:  # BOTH HANDS: desperately claw at the grip
-			limbs[2].set_target_smooth(throat + Vector2(-6.0, sin(intent_time * 2.5) * 4.0) * e, urg * 2.0)
-			limbs[3].set_target_smooth(throat + Vector2(6.0, sin(intent_time * 3.0) * 4.0) * e, urg * 2.0)
+			limbs[2].set_target_smooth(
+				throat + Vector2(-6.0, sin(intent_time * 2.5) * 4.0) * e, urg * 2.0
+			)
+			limbs[3].set_target_smooth(
+				throat + Vector2(6.0, sin(intent_time * 3.0) * 4.0) * e, urg * 2.0
+			)
 			# Feet kick wildly
-			limbs[4].set_target_smooth(limbs[4].rest + Vector2(sin(intent_time * 3.0) * 20.0 * e, sin(intent_time * 2.0) * 8.0 * e), urg * 1.5)
-			limbs[5].set_target_smooth(limbs[5].rest + Vector2(sin(intent_time * 3.5) * 15.0 * e, sin(intent_time * 2.5) * 6.0 * e), urg)
+			limbs[4].set_target_smooth(
+				(
+					limbs[4].rest
+					+ Vector2(sin(intent_time * 3.0) * 20.0 * e, sin(intent_time * 2.0) * 8.0 * e)
+				),
+				urg * 1.5
+			)
+			limbs[5].set_target_smooth(
+				(
+					limbs[5].rest
+					+ Vector2(sin(intent_time * 3.5) * 15.0 * e, sin(intent_time * 2.5) * 6.0 * e)
+				),
+				urg
+			)
 
 		1:  # LEFT HAND grips throat, RIGHT HAND punches at attacker
-			limbs[2].set_target_smooth(throat + Vector2(sin(intent_time * 2.0) * 3.0 * e, 0), urg * 1.5)
+			limbs[2].set_target_smooth(
+				throat + Vector2(sin(intent_time * 2.0) * 3.0 * e, 0), urg * 1.5
+			)
 			# Right hand reaches toward attacker and SWINGS
 			var swing := sin(intent_time * 5.0)
-			limbs[3].set_target_smooth(Vector2(facing_dir * (20.0 + swing * 15.0) * e, limbs[3].rest.y - 25.0 * e), urg * 2.5)
+			limbs[3].set_target_smooth(
+				Vector2(facing_dir * (20.0 + swing * 15.0) * e, limbs[3].rest.y - 25.0 * e),
+				urg * 2.5
+			)
 			limbs[4].set_target_smooth(limbs[4].rest + Vector2(facing_dir * 10.0 * e, 0), urg)
 			limbs[5].set_target_smooth(limbs[5].rest, urg * 0.5)
 
 		2:  # BODY TWIST — try to wrench free sideways
-			limbs[1].set_target_smooth(limbs[1].rest + Vector2(-facing_dir * 15.0 * e, 3.0), urg * 1.5)
+			limbs[1].set_target_smooth(
+				limbs[1].rest + Vector2(-facing_dir * 15.0 * e, 3.0), urg * 1.5
+			)
 			limbs[0].set_target_smooth(limbs[0].rest + Vector2(-facing_dir * 10.0 * e, -2.0), urg)
 			limbs[2].set_target_smooth(throat + Vector2(-facing_dir * 10.0 * e, 2.0), urg)
 			limbs[3].set_target_smooth(limbs[3].rest + Vector2(-facing_dir * 8.0 * e, -5.0), urg)
 			limbs[4].set_target_smooth(limbs[4].rest + Vector2(-facing_dir * 12.0 * e, 0), urg)
-			limbs[5].set_target_smooth(limbs[5].rest + Vector2(facing_dir * 5.0 * e, 3.0), urg * 0.5)
+			limbs[5].set_target_smooth(
+				limbs[5].rest + Vector2(facing_dir * 5.0 * e, 3.0), urg * 0.5
+			)
 
 		3:  # DOUBLE KICK — both feet kick forward at attacker
-			limbs[4].set_target_smooth(Vector2(facing_dir * 22.0 * e, limbs[4].rest.y - 12.0 * e), urg * 2.0)
-			limbs[5].set_target_smooth(Vector2(facing_dir * 18.0 * e, limbs[5].rest.y - 8.0 * e), urg * 1.8)
+			limbs[4].set_target_smooth(
+				Vector2(facing_dir * 22.0 * e, limbs[4].rest.y - 12.0 * e), urg * 2.0
+			)
+			limbs[5].set_target_smooth(
+				Vector2(facing_dir * 18.0 * e, limbs[5].rest.y - 8.0 * e), urg * 1.8
+			)
 			# Hands brace on throat
 			limbs[2].set_target_smooth(throat + Vector2(-4.0, 2.0), urg)
 			limbs[3].set_target_smooth(throat + Vector2(4.0, 2.0), urg)
 
 		4:  # RIGHT HAND grips throat, LEFT HAND pushes attacker's face
-			limbs[3].set_target_smooth(throat + Vector2(sin(intent_time * 2.5) * 3.0 * e, 0), urg * 1.5)
-			limbs[2].set_target_smooth(Vector2(facing_dir * 30.0 * e, limbs[0].rest.y - 5.0), urg * 2.0)
-			limbs[4].set_target_smooth(limbs[4].rest + Vector2(sin(intent_time * 2.0) * 8.0 * e, 0), urg)
-			limbs[5].set_target_smooth(limbs[5].rest + Vector2(0, sin(intent_time * 1.5) * 5.0 * e), urg * 0.5)
+			limbs[3].set_target_smooth(
+				throat + Vector2(sin(intent_time * 2.5) * 3.0 * e, 0), urg * 1.5
+			)
+			limbs[2].set_target_smooth(
+				Vector2(facing_dir * 30.0 * e, limbs[0].rest.y - 5.0), urg * 2.0
+			)
+			limbs[4].set_target_smooth(
+				limbs[4].rest + Vector2(sin(intent_time * 2.0) * 8.0 * e, 0), urg
+			)
+			limbs[5].set_target_smooth(
+				limbs[5].rest + Vector2(0, sin(intent_time * 1.5) * 5.0 * e), urg * 0.5
+			)
 
 		5:  # FULL BODY JERK — sudden violent spasm trying to break free
 			var jerk_dir := _rng.randf_range(-1.0, 1.0)
@@ -293,20 +342,34 @@ func _do_choking(delta: float) -> void:
 			limbs[2].set_target_smooth(throat + Vector2(-5.0, 8.0 * (1.0 - reach)), urg * 0.8)
 			limbs[3].set_target_smooth(throat + Vector2(5.0, 10.0 * (1.0 - reach)), urg * 0.8)
 			# Feet barely move
-			limbs[4].set_target_smooth(limbs[4].rest + Vector2(sin(intent_time * 1.0) * 5.0 * e, 0), urg * 0.5)
+			limbs[4].set_target_smooth(
+				limbs[4].rest + Vector2(sin(intent_time * 1.0) * 5.0 * e, 0), urg * 0.5
+			)
 			limbs[5].set_target_smooth(limbs[5].rest, urg * 0.3)
 
 		7:  # LAST GASP — one hand reaches toward camera/sky (dramatic)
 			limbs[2].set_target_smooth(Vector2(0, limbs[2].rest.y - 35.0 * e), urg * 1.5)
 			limbs[3].set_target_smooth(throat + Vector2(3.0, sin(intent_time * 3.0) * 2.0), urg)
-			limbs[4].set_target_smooth(limbs[4].rest + Vector2(sin(intent_time * 0.8) * 3.0, 0), urg * 0.3)
+			limbs[4].set_target_smooth(
+				limbs[4].rest + Vector2(sin(intent_time * 0.8) * 3.0, 0), urg * 0.3
+			)
 			limbs[5].set_target_smooth(limbs[5].rest, urg * 0.2)
 
 	# Head ALWAYS gasps and jerks
-	limbs[0].set_target_smooth(limbs[0].rest + Vector2(gasp + _rng.randf_range(-1, 1) * e, -4.0 * e + sin(intent_time * 5.0) * 2.0 * e), urg * 1.5)
+	limbs[0].set_target_smooth(
+		(
+			limbs[0].rest
+			+ Vector2(
+				gasp + _rng.randf_range(-1, 1) * e, -4.0 * e + sin(intent_time * 5.0) * 2.0 * e
+			)
+		),
+		urg * 1.5
+	)
 
 	# Body heaves
-	limbs[1].set_target_smooth(limbs[1].rest + Vector2(sin(intent_time * 3.5) * 3.0 * e, gasp * 0.4), urg)
+	limbs[1].set_target_smooth(
+		limbs[1].rest + Vector2(sin(intent_time * 3.5) * 3.0 * e, gasp * 0.4), urg
+	)
 
 	# SCHIZO LAYER: random twitches/convulsions on top of everything
 	_apply_schizo(delta)
@@ -327,7 +390,9 @@ func _do_thrown(delta: float) -> void:
 	for i in 6:
 		limbs[i].stiffness = 20.0  # very soft
 		limbs[i].damping = 3.0
-		limbs[i].set_target_smooth(limbs[i].rest + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 10)), 0.05)
+		limbs[i].set_target_smooth(
+			limbs[i].rest + Vector2(_rng.randf_range(-10, 10), _rng.randf_range(-5, 10)), 0.05
+		)
 
 
 func _do_downed(delta: float) -> void:
@@ -339,7 +404,9 @@ func _do_downed(delta: float) -> void:
 	for i in 6:
 		limbs[i].stiffness = 40.0  # sluggish
 		limbs[i].damping = 8.0
-		limbs[i].set_target_smooth(limbs[i].pos + Vector2(twitch * (0.5 if i > 1 else 1.0), 0), 0.03)
+		limbs[i].set_target_smooth(
+			limbs[i].pos + Vector2(twitch * (0.5 if i > 1 else 1.0), 0), 0.03
+		)
 
 	energy = minf(energy + delta * 0.08, 1.0)  # slowly recovering
 
@@ -352,7 +419,9 @@ func _do_getting_up(delta: float) -> void:
 	for i in 6:
 		limbs[i].stiffness = lerpf(40.0, 80.0, et)
 		limbs[i].damping = lerpf(8.0, 10.0, et)
-		limbs[i].set_target_smooth(limbs[i].rest + Vector2(wobble * (0.3 if i > 3 else 1.0), 0), 0.1 + et * 0.15)
+		limbs[i].set_target_smooth(
+			limbs[i].rest + Vector2(wobble * (0.3 if i > 3 else 1.0), 0), 0.1 + et * 0.15
+		)
 
 	if intent_time >= 1.5:
 		set_intent(Intent.IDLE)
@@ -373,6 +442,7 @@ var _schizo_twitch_timer := 0.0
 var _schizo_target_limb := 0
 var _schizo_impulse := Vector2.ZERO
 
+
 func _apply_schizo(delta: float) -> void:
 	_schizo_twitch_timer -= delta
 
@@ -382,8 +452,7 @@ func _apply_schizo(delta: float) -> void:
 		_schizo_target_limb = _rng.randi_range(0, 5)
 		var intensity := (panic * 0.7 + 0.3) * energy
 		_schizo_impulse = Vector2(
-			_rng.randf_range(-40, 40) * intensity,
-			_rng.randf_range(-30, 20) * intensity
+			_rng.randf_range(-40, 40) * intensity, _rng.randf_range(-30, 20) * intensity
 		)
 		limbs[_schizo_target_limb].impulse(_schizo_impulse)
 
@@ -395,14 +464,22 @@ func _apply_schizo(delta: float) -> void:
 		# Rare FULL BODY convulsion
 		if _rng.randf() < panic * 0.15:
 			for i in 6:
-				limbs[i].impulse(Vector2(
-					_rng.randf_range(-25, 25) * intensity,
-					_rng.randf_range(-20, 10) * intensity
-				))
+				limbs[i].impulse(
+					Vector2(
+						_rng.randf_range(-25, 25) * intensity, _rng.randf_range(-20, 10) * intensity
+					)
+				)
 
 	# Constant micro-tremor on hands (schizo hands never fully still)
-	limbs[2].vel += Vector2(sin(_breath_t * 31.0) * 8.0 * panic, cos(_breath_t * 37.0) * 5.0 * panic) * delta
-	limbs[3].vel += Vector2(sin(_breath_t * 29.0 + 1.7) * 8.0 * panic, cos(_breath_t * 33.0 + 2.3) * 5.0 * panic) * delta
+	limbs[2].vel += (
+		Vector2(sin(_breath_t * 31.0) * 8.0 * panic, cos(_breath_t * 37.0) * 5.0 * panic) * delta
+	)
+	limbs[3].vel += (
+		Vector2(
+			sin(_breath_t * 29.0 + 1.7) * 8.0 * panic, cos(_breath_t * 33.0 + 2.3) * 5.0 * panic
+		)
+		* delta
+	)
 
 	# Head micro-jerk
 	limbs[0].vel += Vector2(sin(_breath_t * 23.0) * 4.0 * panic, 0) * delta
@@ -434,11 +511,13 @@ func _pick_new_action() -> void:
 #  GETTERS for external use
 # ═══════════════════════════════════════
 
+
 func get_positions() -> Array[Vector2]:
 	var result: Array[Vector2] = []
 	for limb in limbs:
 		result.append(limb.pos)
 	return result
+
 
 func get_offsets_from_rest() -> Array[Vector2]:
 	var result: Array[Vector2] = []

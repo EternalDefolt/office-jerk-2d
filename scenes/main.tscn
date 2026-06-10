@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://c73ifc38vcm5c"]
+[gd_scene format=3 uid="uid://c73ifc38vcm5c"]
 
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
 [ext_resource type="PackedScene" path="res://scenes/tiled_floor.tscn" id="2_floor"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://0jb84h4ioxvj" path="res://scripts/finisher.gd" id="4_finisher"]
 [ext_resource type="Script" uid="uid://7xlbi80s8lhg" path="res://scripts/office_bg.gd" id="5_bg"]
 [ext_resource type="PackedScene" path="res://scenes/tiled_wall.tscn" id="6_wall"]
+[ext_resource type="Script" uid="uid://btyu3tho5m34v" path="res://scripts/enemy_ai.gd" id="7_enemy_ai"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_bottom"]
 size = Vector2(1280, 40)
@@ -30,29 +31,29 @@ texture_filter = 1
 texture_repeat = 2
 position = Vector2(0, 464)
 
-[node name="Boundaries" type="Node2D" parent="."]
+[node name="Boundaries" type="Node2D" parent="." unique_id=1880851135]
 
-[node name="BottomWall" type="StaticBody2D" parent="Boundaries"]
+[node name="BottomWall" type="StaticBody2D" parent="Boundaries" unique_id=79712528]
 collision_layer = 2
 collision_mask = 0
 
-[node name="Shape" type="CollisionShape2D" parent="Boundaries/BottomWall"]
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/BottomWall" unique_id=278854550]
 position = Vector2(640, 740)
 shape = SubResource("RectangleShape2D_bottom")
 
-[node name="LeftWall" type="StaticBody2D" parent="Boundaries"]
+[node name="LeftWall" type="StaticBody2D" parent="Boundaries" unique_id=1073564451]
 collision_layer = 2
 collision_mask = 0
 
-[node name="Shape" type="CollisionShape2D" parent="Boundaries/LeftWall"]
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/LeftWall" unique_id=128646375]
 position = Vector2(-20, 664)
 shape = SubResource("RectangleShape2D_side")
 
-[node name="RightWall" type="StaticBody2D" parent="Boundaries"]
+[node name="RightWall" type="StaticBody2D" parent="Boundaries" unique_id=762386310]
 collision_layer = 2
 collision_mask = 0
 
-[node name="Shape" type="CollisionShape2D" parent="Boundaries/RightWall"]
+[node name="Shape" type="CollisionShape2D" parent="Boundaries/RightWall" unique_id=597883957]
 position = Vector2(1300, 664)
 shape = SubResource("RectangleShape2D_side")
 
@@ -64,3 +65,6 @@ position = Vector2(621, 500)
 
 [node name="Finisher" type="Node2D" parent="." unique_id=1746251529]
 script = ExtResource("4_finisher")
+
+[node name="EnemyAI" type="Node" parent="." unique_id=1746251530]
+script = ExtResource("7_enemy_ai")
